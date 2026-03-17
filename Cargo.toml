@@ -1,0 +1,12 @@
+[package]
+name = "ape-decoder"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Pure Rust decoder for Monkey's Audio (APE) lossless audio files"
+repository = "https://github.com/OMBS-IO/ape-decoder"
+keywords = ["audio", "codec", "lossless", "ape", "monkey-audio"]
+categories = ["multimedia::audio", "encoding"]
+
+[dependencies]
+crc32fast = "1"
