@@ -4,9 +4,14 @@ use crate::bitreader::BitReader;
 use crate::crc::ape_crc;
 use crate::entropy::EntropyState;
 use crate::error::{ApeError, ApeResult};
-use crate::format::{self, ApeFileInfo};
+use crate::format::{
+    self, ApeFileInfo, APE_FORMAT_FLAG_AIFF, APE_FORMAT_FLAG_BIG_ENDIAN, APE_FORMAT_FLAG_CAF,
+    APE_FORMAT_FLAG_FLOATING_POINT, APE_FORMAT_FLAG_SIGNED_8_BIT, APE_FORMAT_FLAG_SND,
+    APE_FORMAT_FLAG_W64,
+};
 use crate::predictor::{Predictor3950, Predictor3950_32};
 use crate::range_coder::RangeCoder;
+use crate::tag::{self, ApeTag};
 use crate::unprepare;
 
 // Special frame codes (from Prepare.h)
@@ -15,9 +20,32 @@ const SPECIAL_FRAME_LEFT_SILENCE: i32 = 1;
 const SPECIAL_FRAME_RIGHT_SILENCE: i32 = 2;
 const SPECIAL_FRAME_PSEUDO_STEREO: i32 = 4;
 
+/// Source container format of the original audio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceFormat {
+    Wav,
+    Aiff,
+    W64,
+    Snd,
+    Caf,
+    Unknown,
+}
+
+/// Result of a seek operation.
+#[derive(Debug, Clone, Copy)]
+pub struct SeekResult {
+    /// Frame index containing the target sample.
+    pub frame_index: u32,
+    /// Number of samples to skip within the decoded frame.
+    pub skip_samples: u32,
+    /// The exact sample position reached.
+    pub actual_sample: u64,
+}
+
 /// File metadata accessible without decoding.
 #[derive(Debug, Clone)]
 pub struct ApeInfo {
+    // Core audio properties
     pub version: u16,
     pub compression_level: u16,
     pub sample_rate: u32,
@@ -29,10 +57,38 @@ pub struct ApeInfo {
     pub final_frame_blocks: u32,
     pub duration_ms: u64,
     pub block_align: u16,
+
+    // Format details
+    pub format_flags: u16,
+    pub bytes_per_sample: u16,
+    pub average_bitrate_kbps: u32,
+    pub decompressed_bitrate_kbps: u32,
+    pub file_size_bytes: u64,
+
+    // Format flag helpers
+    pub is_big_endian: bool,
+    pub is_floating_point: bool,
+    pub is_signed_8bit: bool,
+
+    // Source container
+    pub source_format: SourceFormat,
 }
 
 impl ApeInfo {
     fn from_file_info(info: &ApeFileInfo) -> Self {
+        let flags = info.header.format_flags;
+        let source_format = if flags & APE_FORMAT_FLAG_AIFF != 0 {
+            SourceFormat::Aiff
+        } else if flags & APE_FORMAT_FLAG_W64 != 0 {
+            SourceFormat::W64
+        } else if flags & APE_FORMAT_FLAG_SND != 0 {
+            SourceFormat::Snd
+        } else if flags & APE_FORMAT_FLAG_CAF != 0 {
+            SourceFormat::Caf
+        } else {
+            SourceFormat::Wav
+        };
+
         ApeInfo {
             version: info.descriptor.version,
             compression_level: info.header.compression_level,
@@ -45,6 +101,22 @@ impl ApeInfo {
             final_frame_blocks: info.header.final_frame_blocks,
             duration_ms: info.length_ms as u64,
             block_align: info.block_align,
+
+            format_flags: flags,
+            bytes_per_sample: info.bytes_per_sample,
+            average_bitrate_kbps: if info.length_ms > 0 {
+                (info.file_bytes * 8 / info.length_ms as u64) as u32
+            } else {
+                0
+            },
+            decompressed_bitrate_kbps: info.decompressed_bitrate as u32,
+            file_size_bytes: info.file_bytes,
+
+            is_big_endian: flags & APE_FORMAT_FLAG_BIG_ENDIAN != 0,
+            is_floating_point: flags & APE_FORMAT_FLAG_FLOATING_POINT != 0,
+            is_signed_8bit: flags & APE_FORMAT_FLAG_SIGNED_8_BIT != 0,
+
+            source_format,
         }
     }
 
@@ -209,16 +281,58 @@ impl<R: Read + Seek> ApeDecoder<R> {
         Ok(pcm_output)
     }
 
-    /// Seek to a specific sample position. Returns the actual sample position
-    /// (snapped to frame boundary, since frames are independently decodable).
-    pub fn seek(&mut self, sample: u64) -> ApeResult<u64> {
+    /// Seek to a specific sample position. Returns a `SeekResult` with the
+    /// frame index, number of samples to skip within that frame, and the
+    /// exact sample position.
+    pub fn seek(&mut self, sample: u64) -> ApeResult<SeekResult> {
         if self.info.total_frames == 0 {
-            return Ok(0);
+            return Ok(SeekResult {
+                frame_index: 0,
+                skip_samples: 0,
+                actual_sample: 0,
+            });
         }
-        let frame_idx =
-            (sample / self.info.blocks_per_frame as u64).min(self.info.total_frames as u64 - 1);
-        let actual_sample = frame_idx * self.info.blocks_per_frame as u64;
-        Ok(actual_sample)
+        let sample = sample.min(self.info.total_samples.saturating_sub(1));
+        let frame_index = (sample / self.info.blocks_per_frame as u64) as u32;
+        let frame_index = frame_index.min(self.info.total_frames - 1);
+        let frame_start = frame_index as u64 * self.info.blocks_per_frame as u64;
+        let skip_samples = (sample - frame_start) as u32;
+
+        Ok(SeekResult {
+            frame_index,
+            skip_samples,
+            actual_sample: sample,
+        })
+    }
+
+    /// Seek to a sample position and return PCM from that point to the end
+    /// of the containing frame.
+    pub fn decode_from(&mut self, sample: u64) -> ApeResult<Vec<u8>> {
+        let pos = self.seek(sample)?;
+        let frame_pcm = self.decode_frame(pos.frame_index)?;
+        let skip_bytes = pos.skip_samples as usize * self.info.block_align as usize;
+        Ok(frame_pcm[skip_bytes..].to_vec())
+    }
+
+    /// Get the original WAV header data stored in the APE file.
+    /// Returns `None` if the `CREATE_WAV_HEADER` flag is set (header not stored).
+    pub fn wav_header_data(&self) -> Option<&[u8]> {
+        if self.file_info.wav_header_data.is_empty() {
+            None
+        } else {
+            Some(&self.file_info.wav_header_data)
+        }
+    }
+
+    /// Get the number of terminating data bytes from the original container.
+    pub fn wav_terminating_bytes(&self) -> u32 {
+        self.file_info.terminating_data_bytes
+    }
+
+    /// Read and parse APE tags from the file (APEv2 format).
+    /// Returns `None` if no tag is present.
+    pub fn read_tag(&mut self) -> ApeResult<Option<ApeTag>> {
+        tag::read_tag(&mut self.reader)
     }
 
     /// Returns an iterator over decoded frames.
@@ -700,26 +814,94 @@ mod tests {
     }
 
     #[test]
-    fn test_seek_snaps_to_frame() {
+    fn test_seek_sample_level() {
         let reader = open_ape("multiframe_16s_c2000.ape");
         let mut decoder = ApeDecoder::new(reader).unwrap();
         let bpf = decoder.info().blocks_per_frame as u64;
 
-        // Seek to sample 0 → frame 0
-        assert_eq!(decoder.seek(0).unwrap(), 0);
+        // Seek to sample 0 → frame 0, skip 0
+        let r = decoder.seek(0).unwrap();
+        assert_eq!(r.frame_index, 0);
+        assert_eq!(r.skip_samples, 0);
+        assert_eq!(r.actual_sample, 0);
 
-        // Seek to sample in middle of first frame → snaps to frame 0
-        assert_eq!(decoder.seek(100).unwrap(), 0);
+        // Seek to mid-frame → frame 0, skip 100
+        let r = decoder.seek(100).unwrap();
+        assert_eq!(r.frame_index, 0);
+        assert_eq!(r.skip_samples, 100);
+        assert_eq!(r.actual_sample, 100);
 
-        // Seek to exactly frame 1
-        assert_eq!(decoder.seek(bpf).unwrap(), bpf);
+        // Seek to exactly frame 1 → frame 1, skip 0
+        let r = decoder.seek(bpf).unwrap();
+        assert_eq!(r.frame_index, 1);
+        assert_eq!(r.skip_samples, 0);
+        assert_eq!(r.actual_sample, bpf);
 
-        // Seek to middle of frame 1 → snaps to frame 1
-        assert_eq!(decoder.seek(bpf + 100).unwrap(), bpf);
+        // Seek to mid frame 1 → frame 1, skip 100
+        let r = decoder.seek(bpf + 100).unwrap();
+        assert_eq!(r.frame_index, 1);
+        assert_eq!(r.skip_samples, 100);
+        assert_eq!(r.actual_sample, bpf + 100);
 
-        // Seek past end → snaps to last frame
-        let last_frame_start = (decoder.total_frames() as u64 - 1) * bpf;
-        assert_eq!(decoder.seek(u64::MAX).unwrap(), last_frame_start);
+        // Seek past end → clamps to last sample
+        let r = decoder.seek(u64::MAX).unwrap();
+        assert_eq!(r.actual_sample, decoder.info().total_samples - 1);
+    }
+
+    #[test]
+    fn test_decode_from_mid_frame() {
+        let reader = open_ape("sine_16s_c2000.ape");
+        let mut decoder = ApeDecoder::new(reader).unwrap();
+        let block_align = decoder.info().block_align as usize;
+
+        // Decode full frame
+        let full_frame = decoder.decode_frame(0).unwrap();
+
+        // Decode from sample 100
+        let partial = decoder.decode_from(100).unwrap();
+
+        // Partial should be full_frame minus the first 100 blocks
+        let skip = 100 * block_align;
+        assert_eq!(partial, &full_frame[skip..]);
+    }
+
+    #[test]
+    fn test_expanded_metadata() {
+        let reader = open_ape("sine_16s_c2000.ape");
+        let decoder = ApeDecoder::new(reader).unwrap();
+        let info = decoder.info();
+
+        assert_eq!(info.bytes_per_sample, 2);
+        assert_eq!(info.source_format, SourceFormat::Wav);
+        assert!(!info.is_big_endian);
+        assert!(!info.is_floating_point);
+        assert!(!info.is_signed_8bit);
+        assert!(info.average_bitrate_kbps > 0);
+        assert!(info.decompressed_bitrate_kbps > 0);
+        assert!(info.file_size_bytes > 0);
+        assert_eq!(info.format_flags & 0x0200, 0); // not big-endian
+    }
+
+    #[test]
+    fn test_wav_header_data() {
+        let reader = open_ape("sine_16s_c2000.ape");
+        let decoder = ApeDecoder::new(reader).unwrap();
+
+        let header = decoder.wav_header_data();
+        // Test files should have stored WAV headers
+        if let Some(data) = header {
+            assert!(data.len() >= 12);
+            // Should start with RIFF
+            assert_eq!(&data[0..4], b"RIFF");
+        }
+    }
+
+    #[test]
+    fn test_read_tag() {
+        let reader = open_ape("sine_16s_c2000.ape");
+        let mut decoder = ApeDecoder::new(reader).unwrap();
+        // Tag may or may not exist — just ensure no panic
+        let _tag = decoder.read_tag();
     }
 
     #[test]
