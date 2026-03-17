@@ -492,7 +492,7 @@ mod tests {
 
     fn test_fixture_path(name: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../sdk/tests")
+            .join("tests/fixtures")
             .join(name)
     }
 
@@ -626,7 +626,12 @@ mod tests {
             let decoded = decode_ape_file(fixture)
                 .unwrap_or_else(|e| panic!("Failed to decode {}: {:?}", fixture, e));
             let expected = load_reference_pcm(&ref_name);
-            assert_eq!(decoded.len(), expected.len(), "Length mismatch for {}", fixture);
+            assert_eq!(
+                decoded.len(),
+                expected.len(),
+                "Length mismatch for {}",
+                fixture
+            );
             assert_eq!(decoded, expected, "Data mismatch for {}", fixture);
         }
     }

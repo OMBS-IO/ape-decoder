@@ -708,12 +708,12 @@ impl ApeFileInfo {
 mod tests {
     use super::*;
     use std::fs::File;
-    use std::path::Path;
-
-    const TEST_DIR: &str = "../sdk/tests/ape";
+    use std::path::PathBuf;
 
     fn parse_test_file(name: &str) -> ApeFileInfo {
-        let path = Path::new(TEST_DIR).join(name);
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/ape")
+            .join(name);
         let mut file = File::open(&path).unwrap_or_else(|e| {
             panic!("failed to open {}: {}", path.display(), e);
         });

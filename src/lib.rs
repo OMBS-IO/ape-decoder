@@ -1,3 +1,17 @@
+// Allow clippy style lints that conflict with the codec's algorithmic patterns
+#![allow(
+    clippy::too_many_arguments,     // decode functions mirror C++ parameter lists
+    clippy::unnecessary_cast,       // explicit casts document integer width transitions
+    clippy::manual_range_contains,  // boundary checks match C++ source for clarity
+    clippy::new_without_default,    // codec types require explicit initialization parameters
+    clippy::manual_memcpy,          // explicit loops match C++ EXPAND_N_TIMES patterns
+    clippy::needless_range_loop,    // index loops needed for parallel array access
+    clippy::manual_is_multiple_of,  // matches C++ modulo patterns
+    clippy::implicit_saturating_sub,// explicit arithmetic matches C++ overflow semantics
+    clippy::needless_lifetimes,     // explicit lifetimes clarify borrow relationships
+    clippy::empty_line_after_doc_comments
+)]
+
 pub mod bitreader;
 pub mod crc;
 pub mod decoder;
