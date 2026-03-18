@@ -310,7 +310,13 @@ impl<R: Read + Seek> ApeDecoder<R> {
 
     /// Decode all frames, returning all PCM bytes.
     pub fn decode_all(&mut self) -> ApeResult<Vec<u8>> {
-        let total_pcm_bytes = self.info.total_samples as usize * self.info.block_align as usize;
+        let total_pcm_bytes = (self.info.total_samples as usize)
+            .checked_mul(self.info.block_align as usize)
+            .ok_or(ApeError::InvalidFormat("total PCM size overflow"))?;
+        // Cap at 2 GB to prevent OOM from malformed headers
+        if total_pcm_bytes > 2 * 1024 * 1024 * 1024 {
+            return Err(ApeError::InvalidFormat("total PCM size exceeds 2 GB"));
+        }
         let mut pcm_output = Vec::with_capacity(total_pcm_bytes);
 
         for frame_idx in 0..self.info.total_frames {
@@ -330,7 +336,12 @@ impl<R: Read + Seek> ApeDecoder<R> {
         mut on_progress: F,
     ) -> ApeResult<Vec<u8>> {
         let total = self.info.total_frames as f64;
-        let total_pcm_bytes = self.info.total_samples as usize * self.info.block_align as usize;
+        let total_pcm_bytes = (self.info.total_samples as usize)
+            .checked_mul(self.info.block_align as usize)
+            .ok_or(ApeError::InvalidFormat("total PCM size overflow"))?;
+        if total_pcm_bytes > 2 * 1024 * 1024 * 1024 {
+            return Err(ApeError::InvalidFormat("total PCM size exceeds 2 GB"));
+        }
         let mut pcm_output = Vec::with_capacity(total_pcm_bytes);
 
         for frame_idx in 0..self.info.total_frames {
@@ -643,6 +654,9 @@ impl<R: Read + Seek> ApeDecoder<R> {
         let seek_byte = self.file_info.seek_byte(frame_idx);
         let seek_remainder = self.seek_remainder(frame_idx);
         let frame_bytes = self.file_info.frame_byte_count(frame_idx);
+        if frame_bytes > 64 * 1024 * 1024 {
+            return Err(ApeError::InvalidFormat("frame data exceeds 64 MB"));
+        }
         let read_bytes = (frame_bytes as u32 + seek_remainder + 4) as usize;
 
         self.reader
@@ -733,7 +747,11 @@ fn try_decode_frame_16(
     range_coder.flush_bit_array(&mut br);
 
     let mut last_x: i32 = 0;
-    let mut pcm_output = Vec::with_capacity(frame_blocks * block_align);
+    let pcm_size = frame_blocks.checked_mul(block_align).ok_or(ApeError::InvalidFormat("frame too large"))?;
+    if pcm_size > 64 * 1024 * 1024 {
+        return Err(ApeError::InvalidFormat("frame PCM size exceeds 64 MB"));
+    }
+    let mut pcm_output = Vec::with_capacity(pcm_size);
 
     let decode_result: ApeResult<()> = (|| {
         if channels == 2 {
@@ -840,7 +858,11 @@ fn try_decode_frame_32(
     range_coder.flush_bit_array(&mut br);
 
     let mut last_x: i64 = 0;
-    let mut pcm_output = Vec::with_capacity(frame_blocks * block_align);
+    let pcm_size = frame_blocks.checked_mul(block_align).ok_or(ApeError::InvalidFormat("frame too large"))?;
+    if pcm_size > 64 * 1024 * 1024 {
+        return Err(ApeError::InvalidFormat("frame PCM size exceeds 64 MB"));
+    }
+    let mut pcm_output = Vec::with_capacity(pcm_size);
 
     if channels == 2 {
         if (special_codes & SPECIAL_FRAME_LEFT_SILENCE) != 0

@@ -71,12 +71,12 @@ fn unprepare_32(
     output: &mut Vec<u8>,
 ) -> ApeResult<()> {
     if channels == 2 {
-        // Stereo: mid-side decorrelation, write i32 LE. No overflow check.
+        // Stereo: mid-side decorrelation, write i32 LE. Wrapping to match C++ semantics.
         for block in 0..num_blocks {
             let x = values[block * 2];
             let y = values[block * 2 + 1];
-            let first = x - (y / 2);
-            let second = first + y;
+            let first = x.wrapping_sub(y / 2);
+            let second = first.wrapping_add(y);
 
             output.extend_from_slice(&first.to_le_bytes());
             output.extend_from_slice(&second.to_le_bytes());
@@ -99,8 +99,8 @@ fn unprepare_stereo_16(values: &[i32], num_blocks: usize, output: &mut Vec<u8>) 
     for block in 0..num_blocks {
         let x = values[block * 2];
         let y = values[block * 2 + 1];
-        let first = x - (y / 2);
-        let second = first + y;
+        let first = x.wrapping_sub(y / 2);
+        let second = first.wrapping_add(y);
 
         // Overflow validation: 16-bit ONLY
         if first < -32768 || first > 32767 || second < -32768 || second > 32767 {
@@ -119,7 +119,7 @@ fn unprepare_stereo_8(values: &[i32], num_blocks: usize, output: &mut Vec<u8>) -
         let x = values[block * 2];
         let y = values[block * 2 + 1];
         // The +128 bias is integrated into the mid-side formula
-        let first: u8 = (x - (y / 2) + 128) as u8; // wrapping
+        let first: u8 = (x.wrapping_sub(y / 2).wrapping_add(128)) as u8; // wrapping
         let second: u8 = (first as i32 + y) as u8; // wrapping
         output.push(first);
         output.push(second);
@@ -132,8 +132,8 @@ fn unprepare_stereo_24(values: &[i32], num_blocks: usize, output: &mut Vec<u8>) 
     for block in 0..num_blocks {
         let x = values[block * 2];
         let y = values[block * 2 + 1];
-        let first = x - (y / 2);
-        let second = first + y;
+        let first = x.wrapping_sub(y / 2);
+        let second = first.wrapping_add(y);
 
         write_24bit_special(first, output);
         write_24bit_special(second, output);

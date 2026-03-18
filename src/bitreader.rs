@@ -19,7 +19,7 @@ impl BitReader {
     ///
     /// `skip_bits` sets the initial bit index (typically 0).
     pub fn from_frame_bytes(raw: &[u8], skip_bits: u32) -> Self {
-        let words: Vec<u32> = raw
+        let mut words: Vec<u32> = raw
             .chunks(4)
             .map(|chunk| {
                 let mut buf = [0u8; 4];
@@ -27,6 +27,9 @@ impl BitReader {
                 u32::from_le_bytes(buf)
             })
             .collect();
+        // Append sentinel words so out-of-bounds reads return 0 instead of panicking.
+        // This handles malformed files that cause the decoder to read past frame data.
+        words.extend_from_slice(&[0; 4]);
         BitReader {
             words,
             bit_index: skip_bits,
@@ -42,7 +45,8 @@ impl BitReader {
         let word_idx = (self.bit_index >> 5) as usize;
         let bit_off = self.bit_index & 31;
         self.bit_index = self.bit_index.wrapping_add(8);
-        (self.words[word_idx] >> (24 - bit_off)) & 0xFF
+        let word = self.words.get(word_idx).copied().unwrap_or(0);
+        (word >> (24 - bit_off)) & 0xFF
     }
 
     /// Read `n` raw bits from the bit array, handling word boundary splits.
@@ -54,15 +58,17 @@ impl BitReader {
         let word_idx = (self.bit_index >> 5) as usize;
         self.bit_index = self.bit_index.wrapping_add(n);
 
+        let w0 = self.words.get(word_idx).copied().unwrap_or(0);
         if left_bits >= n {
             // Value fits within current word
-            (self.words[word_idx] & POWERS_OF_TWO_MINUS_ONE[left_bits as usize]) >> (left_bits - n)
+            (w0 & POWERS_OF_TWO_MINUS_ONE[left_bits as usize]) >> (left_bits - n)
         } else {
             // Split across two words
             let right_bits = n - left_bits;
             let left_value =
-                (self.words[word_idx] & POWERS_OF_TWO_MINUS_ONE[left_bits as usize]) << right_bits;
-            let right_value = self.words[word_idx + 1] >> (32 - right_bits);
+                (w0 & POWERS_OF_TWO_MINUS_ONE[left_bits as usize]) << right_bits;
+            let w1 = self.words.get(word_idx + 1).copied().unwrap_or(0);
+            let right_value = w1 >> (32 - right_bits);
             left_value | right_value
         }
     }

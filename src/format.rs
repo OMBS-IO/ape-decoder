@@ -328,9 +328,21 @@ fn read_old_header<R: Read + Seek>(
         total_frames
     };
 
+    // Cap at 1M entries (~4MB) to prevent OOM from malformed headers
+    if seek_table_elements > 1_000_000 {
+        return Err(ApeError::InvalidFormat(
+            "seek table too large",
+        ));
+    }
+
     // Read WAV header data
     let mut wav_header_data = Vec::new();
     if format_flags & APE_FORMAT_FLAG_CREATE_WAV_HEADER == 0 && wav_header_bytes > 0 {
+        if (wav_header_bytes as u64) > APE_WAV_HEADER_OR_FOOTER_MAXIMUM_BYTES {
+            return Err(ApeError::InvalidFormat(
+                "WAV header data exceeds 8 MB limit",
+            ));
+        }
         wav_header_data.resize(wav_header_bytes as usize, 0);
         reader.read_exact(&mut wav_header_data)?;
     }
@@ -467,10 +479,10 @@ pub fn parse<R: Read + Seek>(reader: &mut R) -> ApeResult<ApeFileInfo> {
         };
 
         let bytes_per_sample = header.bits_per_sample / 8;
-        let block_align = bytes_per_sample * header.channels;
-        let wav_data_bytes = total_blocks * block_align as i64;
+        let block_align = (bytes_per_sample as u32 * header.channels as u32) as u16;
+        let wav_data_bytes = total_blocks.saturating_mul(block_align as i64);
         let length_ms = if header.sample_rate > 0 {
-            (total_blocks * 1000) / header.sample_rate as i64
+            total_blocks.saturating_mul(1000) / header.sample_rate as i64
         } else {
             0
         };
@@ -480,12 +492,12 @@ pub fn parse<R: Read + Seek>(reader: &mut R) -> ApeResult<ApeFileInfo> {
 
         let ape_total_bytes = file_bytes as i64;
         let average_bitrate = if length_ms > 0 {
-            (ape_total_bytes * 8) / length_ms
+            ape_total_bytes.saturating_mul(8) / length_ms
         } else {
             0
         };
         let decompressed_bitrate = if header.sample_rate > 0 {
-            (block_align as i64 * header.sample_rate as i64 * 8) / 1000
+            (block_align as i64).saturating_mul(header.sample_rate as i64).saturating_mul(8) / 1000
         } else {
             0
         };
@@ -575,6 +587,14 @@ pub fn parse<R: Read + Seek>(reader: &mut R) -> ApeResult<ApeFileInfo> {
 
     // Read seek table (u32 entries, then convert to u64)
     let seek_table_elements = (descriptor.seek_table_bytes / 4) as i32;
+    if seek_table_elements < 0 || seek_table_elements > 1_000_000 {
+        return Err(ApeError::InvalidFormat("seek table too large"));
+    }
+    if file_bytes > 0 && (seek_table_elements as u64) > file_bytes / 4 {
+        return Err(ApeError::InvalidFormat(
+            "seek table elements exceed file size",
+        ));
+    }
     let mut seek_raw = vec![0u32; seek_table_elements as usize];
     for entry in seek_raw.iter_mut() {
         *entry = read_u32_le(reader)?;
@@ -584,6 +604,11 @@ pub fn parse<R: Read + Seek>(reader: &mut R) -> ApeResult<ApeFileInfo> {
     // Read WAV header data
     let mut wav_header_data = Vec::new();
     if descriptor.header_data_bytes > 0 {
+        if (descriptor.header_data_bytes as u64) > APE_WAV_HEADER_OR_FOOTER_MAXIMUM_BYTES {
+            return Err(ApeError::InvalidFormat(
+                "WAV header data exceeds 8 MB limit",
+            ));
+        }
         wav_header_data.resize(descriptor.header_data_bytes as usize, 0);
         reader.read_exact(&mut wav_header_data)?;
     }
@@ -600,11 +625,11 @@ pub fn parse<R: Read + Seek>(reader: &mut R) -> ApeResult<ApeFileInfo> {
     };
 
     let bytes_per_sample = header.bits_per_sample / 8;
-    let block_align = bytes_per_sample * header.channels;
-    let wav_data_bytes = total_blocks * block_align as i64;
+    let block_align = (bytes_per_sample as u32 * header.channels as u32) as u16;
+    let wav_data_bytes = total_blocks.saturating_mul(block_align as i64);
 
     let length_ms = if header.sample_rate > 0 {
-        (total_blocks * 1000) / header.sample_rate as i64
+        total_blocks.saturating_mul(1000) / header.sample_rate as i64
     } else {
         0
     };
@@ -614,13 +639,13 @@ pub fn parse<R: Read + Seek>(reader: &mut R) -> ApeResult<ApeFileInfo> {
 
     let ape_total_bytes = file_bytes as i64;
     let average_bitrate = if length_ms > 0 {
-        (ape_total_bytes * 8) / length_ms
+        ape_total_bytes.saturating_mul(8) / length_ms
     } else {
         0
     };
 
     let decompressed_bitrate = if header.sample_rate > 0 {
-        (block_align as i64 * header.sample_rate as i64 * 8) / 1000
+        (block_align as i64).saturating_mul(header.sample_rate as i64).saturating_mul(8) / 1000
     } else {
         0
     };
@@ -681,7 +706,7 @@ impl ApeFileInfo {
             // End of compressed data = file_size - terminating_data - tag_bytes
             // For simplicity we exclude terminating data; tag detection would
             // require more work. This matches the SDK pattern.
-            let end = self.file_bytes - self.descriptor.terminating_data_bytes as u64;
+            let end = self.file_bytes.saturating_sub(self.descriptor.terminating_data_bytes as u64);
             let start = self.seek_byte(frame_idx);
             if end > start {
                 end - start

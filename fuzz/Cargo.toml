@@ -1,0 +1,32 @@
+[package]
+name = "ape-decoder-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.ape-decoder]
+path = ".."
+
+[[bin]]
+name = "decode_all"
+path = "fuzz_targets/decode_all.rs"
+doc = false
+
+[[bin]]
+name = "decode_frame"
+path = "fuzz_targets/decode_frame.rs"
+doc = false
+
+[[bin]]
+name = "new_only"
+path = "fuzz_targets/new_only.rs"
+doc = false
+
+[workspace]
+members = ["."]

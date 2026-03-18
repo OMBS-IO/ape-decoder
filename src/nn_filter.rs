@@ -71,11 +71,11 @@ fn calculate_dot_product_32(a: &[i32], b: &[i32], order: usize) -> i64 {
 fn adapt_16(m: &mut [i16], delta: &[i16], direction: i32, order: usize) {
     if direction < 0 {
         for i in 0..order {
-            m[i] += delta[i];
+            m[i] = m[i].wrapping_add(delta[i]);
         }
     } else if direction > 0 {
         for i in 0..order {
-            m[i] -= delta[i];
+            m[i] = m[i].wrapping_sub(delta[i]);
         }
     }
 }
@@ -85,11 +85,11 @@ fn adapt_16(m: &mut [i16], delta: &[i16], direction: i32, order: usize) {
 fn adapt_32(m: &mut [i32], delta: &[i32], direction: i64, order: usize) {
     if direction < 0 {
         for i in 0..order {
-            m[i] += delta[i];
+            m[i] = m[i].wrapping_add(delta[i]);
         }
     } else if direction > 0 {
         for i in 0..order {
-            m[i] -= delta[i];
+            m[i] = m[i].wrapping_sub(delta[i]);
         }
     }
 }

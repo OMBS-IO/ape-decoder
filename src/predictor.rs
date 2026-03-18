@@ -53,7 +53,7 @@ impl ScaledFirstOrderFilter {
     /// `last_value = input + (last_value * 31) >> 5; return last_value`
     #[inline(always)]
     pub fn decompress(&mut self, input: i32) -> i32 {
-        self.last_value = input + ((self.last_value as i64 * 31) >> 5) as i32;
+        self.last_value = input.wrapping_add(((self.last_value as i64 * 31) >> 5) as i32);
         self.last_value
     }
 
@@ -61,7 +61,7 @@ impl ScaledFirstOrderFilter {
     /// `result = input - (last_value * 31) >> 5; last_value = input; return result`
     #[inline(always)]
     pub fn compress(&mut self, input: i32) -> i32 {
-        let result = input - ((self.last_value as i64 * 31) >> 5) as i32;
+        let result = input.wrapping_sub(((self.last_value as i64 * 31) >> 5) as i32);
         self.last_value = input;
         result
     }
@@ -172,32 +172,32 @@ impl Predictor3950 {
         self.rb_prediction_a.set(0, self.last_value_a);
         let pa0 = self.rb_prediction_a.get(0);
         let pa_prev = self.rb_prediction_a.get(-1);
-        self.rb_prediction_a.set(-1, pa0 - pa_prev);
+        self.rb_prediction_a.set(-1, pa0.wrapping_sub(pa_prev));
 
         //    B buffer: compress nB through stage1_filter_b, then delta
         let compressed_b = self.stage1_filter_b.compress(n_b);
         self.rb_prediction_b.set(0, compressed_b);
         let pb0 = self.rb_prediction_b.get(0);
         let pb_prev = self.rb_prediction_b.get(-1);
-        self.rb_prediction_b.set(-1, pb0 - pb_prev);
+        self.rb_prediction_b.set(-1, pb0.wrapping_sub(pb_prev));
 
         // 5. Compute prediction and add to residual
         let n_current_a: i32;
 
         if self.bits_per_sample <= 16 {
-            // Normal path: all arithmetic in i32
-            let pred_a: i32 = self.rb_prediction_a.get(0) * self.ary_ma[0]
-                + self.rb_prediction_a.get(-1) * self.ary_ma[1]
-                + self.rb_prediction_a.get(-2) * self.ary_ma[2]
-                + self.rb_prediction_a.get(-3) * self.ary_ma[3];
+            // Normal path: all arithmetic in i32 (wrapping to match C++ signed overflow)
+            let pred_a: i32 = self.rb_prediction_a.get(0).wrapping_mul(self.ary_ma[0])
+                .wrapping_add(self.rb_prediction_a.get(-1).wrapping_mul(self.ary_ma[1]))
+                .wrapping_add(self.rb_prediction_a.get(-2).wrapping_mul(self.ary_ma[2]))
+                .wrapping_add(self.rb_prediction_a.get(-3).wrapping_mul(self.ary_ma[3]));
 
-            let pred_b: i32 = self.rb_prediction_b.get(0) * self.ary_mb[0]
-                + self.rb_prediction_b.get(-1) * self.ary_mb[1]
-                + self.rb_prediction_b.get(-2) * self.ary_mb[2]
-                + self.rb_prediction_b.get(-3) * self.ary_mb[3]
-                + self.rb_prediction_b.get(-4) * self.ary_mb[4];
+            let pred_b: i32 = self.rb_prediction_b.get(0).wrapping_mul(self.ary_mb[0])
+                .wrapping_add(self.rb_prediction_b.get(-1).wrapping_mul(self.ary_mb[1]))
+                .wrapping_add(self.rb_prediction_b.get(-2).wrapping_mul(self.ary_mb[2]))
+                .wrapping_add(self.rb_prediction_b.get(-3).wrapping_mul(self.ary_mb[3]))
+                .wrapping_add(self.rb_prediction_b.get(-4).wrapping_mul(self.ary_mb[4]));
 
-            n_current_a = n_a + ((pred_a + (pred_b >> 1)) >> 10);
+            n_current_a = n_a.wrapping_add((pred_a.wrapping_add(pred_b >> 1)) >> 10);
         } else {
             // High bit-depth path (bitsPerSample > 16, INTTYPE = i32):
             // Widen to i64 for multiplication, then handle truncation.
@@ -214,10 +214,10 @@ impl Predictor3950 {
 
             if self.interim_mode {
                 // Interim mode: keep full precision
-                n_current_a = n_a + ((pred_a + (pred_b >> 1)) >> 10) as i32;
+                n_current_a = n_a.wrapping_add(((pred_a + (pred_b >> 1)) >> 10) as i32);
             } else {
                 // TRUNCATION: cast pred_a and pred_b to i32 BEFORE combining
-                n_current_a = n_a + (((pred_a as i32).wrapping_add((pred_b as i32) >> 1)) >> 10);
+                n_current_a = n_a.wrapping_add(((pred_a as i32).wrapping_add((pred_b as i32) >> 1)) >> 10);
             }
         }
 
@@ -266,16 +266,16 @@ impl Predictor3950 {
         //    Direction uses post-NNFilter nA (NOT nCurrentA, NOT original _nA).
         let adapt_dir: i32 = (n_a < 0) as i32 - (n_a > 0) as i32;
 
-        self.ary_ma[0] += self.rb_adapt_a.get(0) * adapt_dir;
-        self.ary_ma[1] += self.rb_adapt_a.get(-1) * adapt_dir;
-        self.ary_ma[2] += self.rb_adapt_a.get(-2) * adapt_dir;
-        self.ary_ma[3] += self.rb_adapt_a.get(-3) * adapt_dir;
+        self.ary_ma[0] = self.ary_ma[0].wrapping_add(self.rb_adapt_a.get(0).wrapping_mul(adapt_dir));
+        self.ary_ma[1] = self.ary_ma[1].wrapping_add(self.rb_adapt_a.get(-1).wrapping_mul(adapt_dir));
+        self.ary_ma[2] = self.ary_ma[2].wrapping_add(self.rb_adapt_a.get(-2).wrapping_mul(adapt_dir));
+        self.ary_ma[3] = self.ary_ma[3].wrapping_add(self.rb_adapt_a.get(-3).wrapping_mul(adapt_dir));
 
-        self.ary_mb[0] += self.rb_adapt_b.get(0) * adapt_dir;
-        self.ary_mb[1] += self.rb_adapt_b.get(-1) * adapt_dir;
-        self.ary_mb[2] += self.rb_adapt_b.get(-2) * adapt_dir;
-        self.ary_mb[3] += self.rb_adapt_b.get(-3) * adapt_dir;
-        self.ary_mb[4] += self.rb_adapt_b.get(-4) * adapt_dir;
+        self.ary_mb[0] = self.ary_mb[0].wrapping_add(self.rb_adapt_b.get(0).wrapping_mul(adapt_dir));
+        self.ary_mb[1] = self.ary_mb[1].wrapping_add(self.rb_adapt_b.get(-1).wrapping_mul(adapt_dir));
+        self.ary_mb[2] = self.ary_mb[2].wrapping_add(self.rb_adapt_b.get(-2).wrapping_mul(adapt_dir));
+        self.ary_mb[3] = self.ary_mb[3].wrapping_add(self.rb_adapt_b.get(-3).wrapping_mul(adapt_dir));
+        self.ary_mb[4] = self.ary_mb[4].wrapping_add(self.rb_adapt_b.get(-4).wrapping_mul(adapt_dir));
 
         // 8. Stage 1 filter and output.
         let result: i32 = self.stage1_filter_a.decompress(n_current_a);
@@ -386,28 +386,28 @@ impl Predictor3950_32 {
         self.rb_prediction_a.set(0, self.last_value_a);
         let pa0 = self.rb_prediction_a.get(0);
         let pa_prev = self.rb_prediction_a.get(-1);
-        self.rb_prediction_a.set(-1, pa0 - pa_prev);
+        self.rb_prediction_a.set(-1, pa0.wrapping_sub(pa_prev));
 
         let compressed_b = self.stage1_filter_b.compress(n_b as i32);
         self.rb_prediction_b.set(0, compressed_b as i64);
         let pb0 = self.rb_prediction_b.get(0);
         let pb_prev = self.rb_prediction_b.get(-1);
-        self.rb_prediction_b.set(-1, pb0 - pb_prev);
+        self.rb_prediction_b.set(-1, pb0.wrapping_sub(pb_prev));
 
         // 5. Compute prediction (all i64 arithmetic for 32-bit path,
         //    sizeof(INTTYPE) == 8 so we take the "normal" branch)
-        let pred_a: i64 = self.rb_prediction_a.get(0) * self.ary_ma[0]
-            + self.rb_prediction_a.get(-1) * self.ary_ma[1]
-            + self.rb_prediction_a.get(-2) * self.ary_ma[2]
-            + self.rb_prediction_a.get(-3) * self.ary_ma[3];
+        let pred_a: i64 = self.rb_prediction_a.get(0).wrapping_mul(self.ary_ma[0])
+            .wrapping_add(self.rb_prediction_a.get(-1).wrapping_mul(self.ary_ma[1]))
+            .wrapping_add(self.rb_prediction_a.get(-2).wrapping_mul(self.ary_ma[2]))
+            .wrapping_add(self.rb_prediction_a.get(-3).wrapping_mul(self.ary_ma[3]));
 
-        let pred_b: i64 = self.rb_prediction_b.get(0) * self.ary_mb[0]
-            + self.rb_prediction_b.get(-1) * self.ary_mb[1]
-            + self.rb_prediction_b.get(-2) * self.ary_mb[2]
-            + self.rb_prediction_b.get(-3) * self.ary_mb[3]
-            + self.rb_prediction_b.get(-4) * self.ary_mb[4];
+        let pred_b: i64 = self.rb_prediction_b.get(0).wrapping_mul(self.ary_mb[0])
+            .wrapping_add(self.rb_prediction_b.get(-1).wrapping_mul(self.ary_mb[1]))
+            .wrapping_add(self.rb_prediction_b.get(-2).wrapping_mul(self.ary_mb[2]))
+            .wrapping_add(self.rb_prediction_b.get(-3).wrapping_mul(self.ary_mb[3]))
+            .wrapping_add(self.rb_prediction_b.get(-4).wrapping_mul(self.ary_mb[4]));
 
-        let n_current_a: i64 = n_a + ((pred_a + (pred_b >> 1)) >> 10);
+        let n_current_a: i64 = n_a.wrapping_add((pred_a.wrapping_add(pred_b >> 1)) >> 10);
 
         // 6. Adapt signs (i64 version: shift by 62 for sign bit extraction)
         let pa0_val = self.rb_prediction_a.get(0);
@@ -451,16 +451,16 @@ impl Predictor3950_32 {
         // 7. Adapt coefficients
         let adapt_dir: i64 = (n_a < 0) as i64 - (n_a > 0) as i64;
 
-        self.ary_ma[0] += self.rb_adapt_a.get(0) * adapt_dir;
-        self.ary_ma[1] += self.rb_adapt_a.get(-1) * adapt_dir;
-        self.ary_ma[2] += self.rb_adapt_a.get(-2) * adapt_dir;
-        self.ary_ma[3] += self.rb_adapt_a.get(-3) * adapt_dir;
+        self.ary_ma[0] = self.ary_ma[0].wrapping_add(self.rb_adapt_a.get(0).wrapping_mul(adapt_dir));
+        self.ary_ma[1] = self.ary_ma[1].wrapping_add(self.rb_adapt_a.get(-1).wrapping_mul(adapt_dir));
+        self.ary_ma[2] = self.ary_ma[2].wrapping_add(self.rb_adapt_a.get(-2).wrapping_mul(adapt_dir));
+        self.ary_ma[3] = self.ary_ma[3].wrapping_add(self.rb_adapt_a.get(-3).wrapping_mul(adapt_dir));
 
-        self.ary_mb[0] += self.rb_adapt_b.get(0) * adapt_dir;
-        self.ary_mb[1] += self.rb_adapt_b.get(-1) * adapt_dir;
-        self.ary_mb[2] += self.rb_adapt_b.get(-2) * adapt_dir;
-        self.ary_mb[3] += self.rb_adapt_b.get(-3) * adapt_dir;
-        self.ary_mb[4] += self.rb_adapt_b.get(-4) * adapt_dir;
+        self.ary_mb[0] = self.ary_mb[0].wrapping_add(self.rb_adapt_b.get(0).wrapping_mul(adapt_dir));
+        self.ary_mb[1] = self.ary_mb[1].wrapping_add(self.rb_adapt_b.get(-1).wrapping_mul(adapt_dir));
+        self.ary_mb[2] = self.ary_mb[2].wrapping_add(self.rb_adapt_b.get(-2).wrapping_mul(adapt_dir));
+        self.ary_mb[3] = self.ary_mb[3].wrapping_add(self.rb_adapt_b.get(-3).wrapping_mul(adapt_dir));
+        self.ary_mb[4] = self.ary_mb[4].wrapping_add(self.rb_adapt_b.get(-4).wrapping_mul(adapt_dir));
 
         // 8. Stage 1 filter and output
         let result: i32 = self.stage1_filter_a.decompress(n_current_a as i32);
