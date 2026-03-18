@@ -129,6 +129,45 @@ impl ApeInfo {
             self.blocks_per_frame
         }
     }
+
+    /// Generate a standard 44-byte RIFF/WAVE header for the decoded audio.
+    ///
+    /// Use this when `ApeDecoder::wav_header_data()` returns `None` (the
+    /// `CREATE_WAV_HEADER` flag was set, meaning the original header was not
+    /// stored). Combine with decoded PCM to produce a valid WAV file:
+    ///
+    /// ```rust,ignore
+    /// let header = decoder.info().generate_wav_header();
+    /// let pcm = decoder.decode_all()?;
+    /// output.write_all(&header)?;
+    /// output.write_all(&pcm)?;
+    /// ```
+    pub fn generate_wav_header(&self) -> Vec<u8> {
+        let data_size = self.total_samples as u32 * self.block_align as u32;
+        let file_size = 36 + data_size;
+
+        let mut header = Vec::with_capacity(44);
+        header.extend_from_slice(b"RIFF");
+        header.extend_from_slice(&file_size.to_le_bytes());
+        header.extend_from_slice(b"WAVE");
+
+        // fmt sub-chunk
+        header.extend_from_slice(b"fmt ");
+        header.extend_from_slice(&16u32.to_le_bytes()); // sub-chunk size
+        header.extend_from_slice(&1u16.to_le_bytes()); // PCM format
+        header.extend_from_slice(&self.channels.to_le_bytes());
+        header.extend_from_slice(&self.sample_rate.to_le_bytes());
+        let byte_rate = self.sample_rate * self.block_align as u32;
+        header.extend_from_slice(&byte_rate.to_le_bytes());
+        header.extend_from_slice(&self.block_align.to_le_bytes());
+        header.extend_from_slice(&self.bits_per_sample.to_le_bytes());
+
+        // data sub-chunk
+        header.extend_from_slice(b"data");
+        header.extend_from_slice(&data_size.to_le_bytes());
+
+        header
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1503,5 +1542,53 @@ mod tests {
         let md5 = decoder.stored_md5();
         // The mac tool should have stored a valid MD5
         assert_ne!(md5, &[0u8; 16], "MD5 should not be all zeros");
+    }
+
+    // --- WAV header generation test ---
+
+    #[test]
+    fn test_generate_wav_header() {
+        let reader = open_ape("sine_16s_c2000.ape");
+        let decoder = ApeDecoder::new(reader).unwrap();
+        let header = decoder.info().generate_wav_header();
+
+        // Standard WAV header is 44 bytes
+        assert_eq!(header.len(), 44);
+
+        // Check RIFF magic
+        assert_eq!(&header[0..4], b"RIFF");
+        assert_eq!(&header[8..12], b"WAVE");
+        assert_eq!(&header[12..16], b"fmt ");
+        assert_eq!(&header[36..40], b"data");
+
+        // Check format: PCM, 2 channels, 44100 Hz, 16-bit
+        let channels = u16::from_le_bytes([header[22], header[23]]);
+        let sample_rate = u32::from_le_bytes([header[24], header[25], header[26], header[27]]);
+        let bits = u16::from_le_bytes([header[34], header[35]]);
+        assert_eq!(channels, 2);
+        assert_eq!(sample_rate, 44100);
+        assert_eq!(bits, 16);
+
+        // Data size should match total_samples * block_align
+        let data_size = u32::from_le_bytes([header[40], header[41], header[42], header[43]]);
+        let expected = decoder.info().total_samples as u32 * decoder.info().block_align as u32;
+        assert_eq!(data_size, expected);
+    }
+
+    #[test]
+    fn test_generate_wav_header_matches_stored() {
+        let reader = open_ape("sine_16s_c2000.ape");
+        let decoder = ApeDecoder::new(reader).unwrap();
+
+        let generated = decoder.info().generate_wav_header();
+        if let Some(stored) = decoder.wav_header_data() {
+            // Both should be 44 bytes for standard WAV
+            if stored.len() == 44 {
+                // Format fields should match (channels, rate, bits)
+                assert_eq!(&generated[22..24], &stored[22..24]); // channels
+                assert_eq!(&generated[24..28], &stored[24..28]); // sample rate
+                assert_eq!(&generated[34..36], &stored[34..36]); // bits per sample
+            }
+        }
     }
 }
