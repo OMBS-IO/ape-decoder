@@ -7,6 +7,8 @@
 
 Pure Rust decoder for [Monkey's Audio](https://monkeysaudio.com/) (APE) lossless audio files.
 
+Built by [OMBS.IO](https://ombs.io) for echobox, our audiophile music app where lossless playback matters. We will also be contributing to the [Symphonia](https://github.com/pdeljanov/Symphonia) audio framework to bring native APE codec support to the broader Rust audio ecosystem.
+
 ## Features
 
 - Decode APE files to raw PCM audio
