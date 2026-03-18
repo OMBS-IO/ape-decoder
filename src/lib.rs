@@ -31,4 +31,4 @@ pub mod unprepare;
 pub use decoder::{decode, ApeDecoder, ApeInfo, FrameIterator, SeekResult, SourceFormat};
 pub use error::{ApeError, ApeResult};
 pub use id3v2::{read_id3v2, Id3v2Frame, Id3v2Tag};
-pub use tag::{read_tag, ApeTag, ApeTagField, TagFieldType};
+pub use tag::{read_tag, remove_tag, write_tag, ApeTag, ApeTagField, TagFieldType};

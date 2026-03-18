@@ -1,4 +1,4 @@
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 
 use crate::error::{ApeError, ApeResult};
 
@@ -162,6 +162,257 @@ impl ApeTag {
     pub fn comment(&self) -> Option<&str> {
         self.get(field_names::COMMENT)
     }
+
+    // --- Mutating methods for tag writing ---
+
+    /// Create a new empty APEv2 tag.
+    pub fn new() -> Self {
+        ApeTag {
+            version: 2000,
+            fields: Vec::new(),
+            has_header: true,
+        }
+    }
+
+    /// Set a UTF-8 text field. Creates the field if it doesn't exist,
+    /// or updates the value if it does (case-insensitive name match).
+    pub fn set(&mut self, name: &str, value: &str) {
+        let name_lower = name.to_ascii_lowercase();
+        if let Some(field) = self
+            .fields
+            .iter_mut()
+            .find(|f| f.name.to_ascii_lowercase() == name_lower)
+        {
+            field.value = value.as_bytes().to_vec();
+            field.flags = TAG_FIELD_FLAG_DATA_TYPE_TEXT_UTF8;
+        } else {
+            self.fields.push(ApeTagField {
+                name: name.to_string(),
+                value: value.as_bytes().to_vec(),
+                flags: TAG_FIELD_FLAG_DATA_TYPE_TEXT_UTF8,
+            });
+        }
+    }
+
+    /// Set a binary field. Creates or updates (case-insensitive name match).
+    pub fn set_binary(&mut self, name: &str, value: Vec<u8>) {
+        let name_lower = name.to_ascii_lowercase();
+        if let Some(field) = self
+            .fields
+            .iter_mut()
+            .find(|f| f.name.to_ascii_lowercase() == name_lower)
+        {
+            field.value = value;
+            field.flags = TAG_FIELD_FLAG_DATA_TYPE_BINARY;
+        } else {
+            self.fields.push(ApeTagField {
+                name: name.to_string(),
+                value,
+                flags: TAG_FIELD_FLAG_DATA_TYPE_BINARY,
+            });
+        }
+    }
+
+    /// Remove a field by name (case-insensitive). Returns true if a field was removed.
+    pub fn remove(&mut self, name: &str) -> bool {
+        let name_lower = name.to_ascii_lowercase();
+        let before = self.fields.len();
+        self.fields
+            .retain(|f| f.name.to_ascii_lowercase() != name_lower);
+        self.fields.len() != before
+    }
+
+    /// Serialize the tag to bytes (optional header + field data + footer).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        // Serialize field data
+        let mut field_data = Vec::new();
+        for field in &self.fields {
+            field_data.extend_from_slice(&(field.value.len() as u32).to_le_bytes());
+            field_data.extend_from_slice(&field.flags.to_le_bytes());
+            field_data.extend_from_slice(field.name.as_bytes());
+            field_data.push(0); // null terminator
+            field_data.extend_from_slice(&field.value);
+        }
+
+        let tag_size = field_data.len() as u32 + APE_TAG_FOOTER_BYTES;
+        let tag_flags = APE_TAG_FLAG_CONTAINS_FOOTER
+            | if self.has_header {
+                APE_TAG_FLAG_CONTAINS_HEADER
+            } else {
+                0
+            };
+
+        let mut result = Vec::new();
+
+        // Optional header (same as footer but with IS_HEADER flag)
+        if self.has_header {
+            result.extend_from_slice(APE_TAG_MAGIC);
+            result.extend_from_slice(&self.version.to_le_bytes());
+            result.extend_from_slice(&tag_size.to_le_bytes());
+            result.extend_from_slice(&(self.fields.len() as u32).to_le_bytes());
+            result.extend_from_slice(&(tag_flags | APE_TAG_FLAG_IS_HEADER).to_le_bytes());
+            result.extend_from_slice(&[0u8; 8]); // reserved
+        }
+
+        // Field data
+        result.extend_from_slice(&field_data);
+
+        // Footer
+        result.extend_from_slice(APE_TAG_MAGIC);
+        result.extend_from_slice(&self.version.to_le_bytes());
+        result.extend_from_slice(&tag_size.to_le_bytes());
+        result.extend_from_slice(&(self.fields.len() as u32).to_le_bytes());
+        result.extend_from_slice(&tag_flags.to_le_bytes());
+        result.extend_from_slice(&[0u8; 8]); // reserved
+
+        result
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tag writing
+// ---------------------------------------------------------------------------
+
+/// Write an APE tag to the end of a file, replacing any existing APE tag.
+/// Preserves any existing ID3v1 tag.
+pub fn write_tag<W: Read + Write + Seek>(writer: &mut W, tag: &ApeTag) -> ApeResult<()> {
+    let file_size = writer.seek(SeekFrom::End(0))?;
+
+    // Detect existing ID3v1 tag
+    let mut id3v1_data: Option<[u8; 128]> = None;
+    if file_size >= ID3V1_TAG_BYTES {
+        writer.seek(SeekFrom::End(-(ID3V1_TAG_BYTES as i64)))?;
+        let mut buf = [0u8; 128];
+        writer.read_exact(&mut buf)?;
+        if &buf[0..3] == b"TAG" {
+            id3v1_data = Some(buf);
+        }
+    }
+
+    // Detect and remove existing APE tag
+    let footer_offset = if id3v1_data.is_some() {
+        file_size - ID3V1_TAG_BYTES - APE_TAG_FOOTER_BYTES as u64
+    } else {
+        file_size - APE_TAG_FOOTER_BYTES as u64
+    };
+
+    let mut truncate_to = if id3v1_data.is_some() {
+        file_size - ID3V1_TAG_BYTES
+    } else {
+        file_size
+    };
+
+    if footer_offset < file_size {
+        writer.seek(SeekFrom::Start(footer_offset))?;
+        let mut footer_buf = [0u8; 32];
+        if writer.read_exact(&mut footer_buf).is_ok() && &footer_buf[0..8] == APE_TAG_MAGIC {
+            // Valid APE footer found — compute total tag size and truncate
+            let existing_size = u32::from_le_bytes([
+                footer_buf[12],
+                footer_buf[13],
+                footer_buf[14],
+                footer_buf[15],
+            ]);
+            let existing_flags = u32::from_le_bytes([
+                footer_buf[20],
+                footer_buf[21],
+                footer_buf[22],
+                footer_buf[23],
+            ]);
+            let has_existing_header = existing_flags & APE_TAG_FLAG_CONTAINS_HEADER != 0;
+            let total_existing = existing_size as u64
+                + if has_existing_header {
+                    APE_TAG_FOOTER_BYTES as u64
+                } else {
+                    0
+                };
+            truncate_to = truncate_to.saturating_sub(total_existing);
+        }
+    }
+
+    // Truncate file to remove old tag
+    writer.seek(SeekFrom::Start(truncate_to))?;
+    // Write new tag
+    let tag_bytes = tag.to_bytes();
+    writer.write_all(&tag_bytes)?;
+
+    // Re-append ID3v1 if it existed
+    if let Some(id3v1) = id3v1_data {
+        writer.write_all(&id3v1)?;
+    }
+
+    // Note: For real files, the caller should truncate to writer.stream_position()
+    // after this call. Cursor<Vec<u8>> doesn't support truncation.
+
+    Ok(())
+}
+
+/// Remove all APE tags from a file. Preserves ID3v1 tags.
+pub fn remove_tag<W: Read + Write + Seek>(writer: &mut W) -> ApeResult<()> {
+    let file_size = writer.seek(SeekFrom::End(0))?;
+
+    // Detect ID3v1
+    let mut has_id3v1 = false;
+    let mut id3v1_data = [0u8; 128];
+    if file_size >= ID3V1_TAG_BYTES {
+        writer.seek(SeekFrom::End(-(ID3V1_TAG_BYTES as i64)))?;
+        writer.read_exact(&mut id3v1_data)?;
+        has_id3v1 = &id3v1_data[0..3] == b"TAG";
+    }
+
+    // Detect APE footer
+    let footer_offset = if has_id3v1 {
+        file_size - ID3V1_TAG_BYTES - APE_TAG_FOOTER_BYTES as u64
+    } else {
+        file_size - APE_TAG_FOOTER_BYTES as u64
+    };
+
+    if footer_offset >= file_size {
+        return Ok(()); // no room for a tag
+    }
+
+    writer.seek(SeekFrom::Start(footer_offset))?;
+    let mut footer_buf = [0u8; 32];
+    if writer.read_exact(&mut footer_buf).is_err() || &footer_buf[0..8] != APE_TAG_MAGIC {
+        return Ok(()); // no APE tag found
+    }
+
+    // Compute tag size
+    let tag_size = u32::from_le_bytes([
+        footer_buf[12],
+        footer_buf[13],
+        footer_buf[14],
+        footer_buf[15],
+    ]);
+    let tag_flags = u32::from_le_bytes([
+        footer_buf[20],
+        footer_buf[21],
+        footer_buf[22],
+        footer_buf[23],
+    ]);
+    let has_header = tag_flags & APE_TAG_FLAG_CONTAINS_HEADER != 0;
+    let total_tag_bytes = tag_size as u64
+        + if has_header {
+            APE_TAG_FOOTER_BYTES as u64
+        } else {
+            0
+        };
+
+    // Truncate to remove tag
+    let base = if has_id3v1 {
+        file_size - ID3V1_TAG_BYTES
+    } else {
+        file_size
+    };
+    let truncate_to = base.saturating_sub(total_tag_bytes);
+    writer.seek(SeekFrom::Start(truncate_to))?;
+
+    // Re-append ID3v1 if it existed
+    if has_id3v1 {
+        writer.write_all(&id3v1_data)?;
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -628,5 +879,170 @@ mod tests {
 
         assert_eq!(tag.version, 2000);
         assert_eq!(tag.fields.len(), 9);
+    }
+
+    // --- Tag writing tests ---
+
+    #[test]
+    fn new_tag_is_empty() {
+        let tag = ApeTag::new();
+        assert_eq!(tag.version, 2000);
+        assert!(tag.fields.is_empty());
+        assert!(tag.has_header);
+    }
+
+    #[test]
+    fn set_and_get_text_field() {
+        let mut tag = ApeTag::new();
+        tag.set("Title", "Test Song");
+        tag.set("Artist", "Test Artist");
+
+        assert_eq!(tag.title(), Some("Test Song"));
+        assert_eq!(tag.artist(), Some("Test Artist"));
+    }
+
+    #[test]
+    fn set_updates_existing_field() {
+        let mut tag = ApeTag::new();
+        tag.set("Title", "Original");
+        tag.set("Title", "Updated");
+
+        assert_eq!(tag.title(), Some("Updated"));
+        assert_eq!(tag.fields.len(), 1); // no duplicate
+    }
+
+    #[test]
+    fn remove_field() {
+        let mut tag = ApeTag::new();
+        tag.set("Title", "Song");
+        tag.set("Artist", "Band");
+
+        assert!(tag.remove("title")); // case-insensitive
+        assert_eq!(tag.title(), None);
+        assert_eq!(tag.artist(), Some("Band"));
+        assert!(!tag.remove("Title")); // already removed
+    }
+
+    #[test]
+    fn serialize_and_parse_roundtrip() {
+        let mut tag = ApeTag::new();
+        tag.set("Title", "Round Trip");
+        tag.set("Artist", "Tester");
+        tag.set("Year", "2026");
+
+        let bytes = tag.to_bytes();
+        let mut cursor = Cursor::new(bytes);
+        let parsed = read_tag(&mut cursor).unwrap().expect("should parse");
+
+        assert_eq!(parsed.version, 2000);
+        assert_eq!(parsed.fields.len(), 3);
+        assert_eq!(parsed.get("Title"), Some("Round Trip"));
+        assert_eq!(parsed.get("Artist"), Some("Tester"));
+        assert_eq!(parsed.get("Year"), Some("2026"));
+    }
+
+    #[test]
+    fn serialize_empty_tag() {
+        let tag = ApeTag::new();
+        let bytes = tag.to_bytes();
+        // Header (32) + no fields + footer (32) = 64 bytes
+        assert_eq!(bytes.len(), 64);
+
+        let mut cursor = Cursor::new(bytes);
+        let parsed = read_tag(&mut cursor)
+            .unwrap()
+            .expect("should parse empty tag");
+        assert!(parsed.fields.is_empty());
+    }
+
+    #[test]
+    fn write_tag_to_file() {
+        // Create a minimal "file" with some content
+        let mut file_data = vec![0xAA; 100];
+        let mut cursor = Cursor::new(&mut file_data);
+
+        let mut tag = ApeTag::new();
+        tag.set("Title", "Written");
+        tag.set("Artist", "Writer");
+
+        write_tag(&mut cursor, &tag).unwrap();
+
+        // Read it back
+        let data = cursor.into_inner();
+        let mut read_cursor = Cursor::new(data.as_slice());
+        let parsed = read_tag(&mut read_cursor)
+            .unwrap()
+            .expect("should read written tag");
+
+        assert_eq!(parsed.get("Title"), Some("Written"));
+        assert_eq!(parsed.get("Artist"), Some("Writer"));
+    }
+
+    #[test]
+    fn write_tag_replaces_existing() {
+        // Build initial file with a tag
+        let mut tag1 = ApeTag::new();
+        tag1.set("Title", "First");
+        let tag1_bytes = tag1.to_bytes();
+
+        let mut file_data: Vec<u8> = vec![0xBB; 50];
+        file_data.extend_from_slice(&tag1_bytes);
+
+        let mut cursor = Cursor::new(file_data);
+
+        // Write a new tag (should replace)
+        let mut tag2 = ApeTag::new();
+        tag2.set("Title", "Second");
+        tag2.set("Album", "New Album");
+        write_tag(&mut cursor, &tag2).unwrap();
+
+        // Read back
+        let data = cursor.into_inner();
+        let mut read_cursor = Cursor::new(data.as_slice());
+        let parsed = read_tag(&mut read_cursor)
+            .unwrap()
+            .expect("should read replaced tag");
+
+        assert_eq!(parsed.get("Title"), Some("Second"));
+        assert_eq!(parsed.get("Album"), Some("New Album"));
+        assert_eq!(parsed.fields.len(), 2); // only new fields, not old
+    }
+
+    #[test]
+    fn remove_tag_from_file() {
+        // Build file with a tag
+        let mut tag = ApeTag::new();
+        tag.set("Title", "To Remove");
+        let tag_bytes = tag.to_bytes();
+
+        let content_size = 50;
+        let mut file_data: Vec<u8> = vec![0xCC; content_size];
+        file_data.extend_from_slice(&tag_bytes);
+
+        let mut cursor = Cursor::new(file_data);
+        remove_tag(&mut cursor).unwrap();
+
+        // After remove_tag, the cursor position indicates the new logical end.
+        // For Cursor<Vec<u8>>, we need to manually truncate.
+        let new_end = cursor.position() as usize;
+        let mut data = cursor.into_inner();
+        data.truncate(new_end);
+
+        // Read back — should be gone (only original content remains)
+        let mut read_cursor = Cursor::new(data.as_slice());
+        let result = read_tag(&mut read_cursor).unwrap();
+        assert!(result.is_none());
+        assert_eq!(new_end, content_size); // only original content left
+    }
+
+    #[test]
+    fn set_binary_field() {
+        let mut tag = ApeTag::new();
+        tag.set_binary("Cover Art (front)", vec![0xFF, 0xD8, 0xFF, 0xE0]);
+
+        let field = tag.field("Cover Art (front)").unwrap();
+        assert_eq!(field.field_type(), TagFieldType::Binary);
+        assert_eq!(field.value, vec![0xFF, 0xD8, 0xFF, 0xE0]);
+        assert!(field.value_as_str().is_none()); // binary, not text
     }
 }
