@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-18
+
 ### Added
 - WAV header generation for decoded APE audio
 - APE tag writing and removal
@@ -15,7 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Range decoding (decode a subset of samples)
 - ID3v2 tag parsing (v2.3 and v2.4)
 - Progress callbacks with cancellation
-- GitHub community templates and guidelines
+- Runnable decode example (`examples/decode.rs`)
+- CI: cross-platform matrix (Linux, macOS, Windows), MSRV verification, doc checks
+- Dependabot for Cargo and GitHub Actions dependencies
+- Automated crates.io publish on tag push
+- CHANGELOG.md, README badges, docs.rs metadata
+
+### Changed
+- Internal codec modules are now `pub(crate)` (not part of public API)
+- `ApeError` is now `#[non_exhaustive]`
+
+### Fixed
+- Hardcoded test path that broke CI on GitHub Actions
 
 ## [0.1.1] - 2026-03-18
 
@@ -36,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - CI workflow
 - Automated release script
 
-[Unreleased]: https://github.com/OMBS-IO/ape-decoder/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/OMBS-IO/ape-decoder/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/OMBS-IO/ape-decoder/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/OMBS-IO/ape-decoder/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/OMBS-IO/ape-decoder/releases/tag/v0.1.0

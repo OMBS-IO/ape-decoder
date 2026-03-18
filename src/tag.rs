@@ -682,10 +682,9 @@ mod tests {
     fn read_tag_from_fixture() {
         // The test fixture files were generated without APE tags.
         // Verify that read_tag gracefully returns None.
-        let mut file = std::fs::File::open(
-            "/home/johns/repos/ape/decoder/tests/fixtures/ape/sine_16s_c2000.ape",
-        )
-        .expect("failed to open test fixture");
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/ape/sine_16s_c2000.ape");
+        let mut file = std::fs::File::open(&path).expect("failed to open test fixture");
         let result = read_tag(&mut file).expect("read_tag should not error");
         assert!(result.is_none(), "fixture has no APE tag");
     }
