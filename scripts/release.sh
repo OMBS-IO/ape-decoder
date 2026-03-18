@@ -44,25 +44,26 @@ echo ""
 # --- Pre-flight checks ---
 echo "--- Pre-flight checks ---"
 
-# Check for uncommitted changes
-if ! git diff --quiet HEAD 2>/dev/null; then
+# Check for uncommitted or untracked changes
+if ! git diff --quiet HEAD 2>/dev/null || [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     echo "ERROR: Uncommitted changes. Commit or stash first."
+    echo "  $(git status --short)"
     exit 1
 fi
 
 # Run tests
 echo "  Running tests..."
-cargo test --quiet
+cargo test --quiet 2>&1
 echo "  Tests: PASS"
 
 # Run clippy
 echo "  Running clippy..."
-cargo clippy -- -D warnings --quiet 2>/dev/null
+cargo clippy --quiet -- -D warnings 2>&1
 echo "  Clippy: PASS"
 
 # Check formatting
 echo "  Checking format..."
-cargo fmt --check
+cargo fmt --check 2>&1
 echo "  Format: PASS"
 
 echo ""
