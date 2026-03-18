@@ -165,6 +165,31 @@ if decoder.verify_md5()? {
 All five compression levels: Fast (1000), Normal (2000), High (3000),
 Extra High (4000), Insane (5000).
 
+## Testing & Verification
+
+The decoder is validated through 127 automated tests covering all compression levels, bit depths, channel layouts, and edge cases:
+
+- **Unit tests**: byte-for-byte PCM comparison against C++ reference decoder output for 17 synthetic fixtures
+- **Stress tests**: 6 complex signals (chirp, multitone, transient, fade, square, intermod) at all 5 compression levels
+- **CRC validation**: per-frame CRC-32 verification and corruption detection tests
+- **Fuzz testing**: `cargo-fuzz` with 3 targets (full decode, frame decode, parser) to catch panics on malformed input
+
+### Real-World Performance
+
+Verified against a 633 MB vinyl rip (96 kHz, 24-bit stereo, 32 minutes):
+
+| | C++ Reference (mac v12.53) | Rust Decoder |
+|---|---|---|
+| **Time** | 1m 49s | 42s (~2.6x faster) |
+| **Output** | 1,105,211,232 bytes PCM | 1,105,211,232 bytes PCM |
+| **Match** | byte-for-byte identical | byte-for-byte identical |
+
+Run your own verification:
+
+```bash
+./scripts/verify_real_world.sh path/to/file.ape
+```
+
 ## Limitations
 
 - Decode only (no encoder)

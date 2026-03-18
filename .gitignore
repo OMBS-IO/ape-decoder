@@ -1,2 +1,16 @@
+# Rust build
 /target/
 Cargo.lock
+
+# Fuzz testing (cargo-fuzz)
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
+
+# Test artifacts
+*.ape.bak
+/tmp/
+
+# Large test files (not committed)
+*.pcm
