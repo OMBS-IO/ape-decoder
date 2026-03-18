@@ -21,7 +21,7 @@ pub(crate) mod crc;
 pub mod decoder;
 pub(crate) mod entropy;
 pub mod error;
-pub(crate) mod format;
+pub mod format;
 pub mod id3v2;
 pub(crate) mod nn_filter;
 pub(crate) mod predictor;
@@ -30,7 +30,8 @@ pub(crate) mod roll_buffer;
 pub mod tag;
 pub(crate) mod unprepare;
 
-pub use decoder::{decode, ApeDecoder, ApeInfo, FrameIterator, SeekResult, SourceFormat};
+pub use decoder::{decode, ApeDecoder, ApeInfo, FrameDecoder, FrameIterator, SeekResult, SourceFormat};
+pub use format::ApeFileInfo;
 pub use error::{ApeError, ApeResult};
 pub use id3v2::{read_id3v2, Id3v2Frame, Id3v2Tag};
 pub use tag::{read_tag, remove_tag, write_tag, ApeTag, ApeTagField, TagFieldType};

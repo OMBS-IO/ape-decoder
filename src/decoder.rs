@@ -642,15 +642,23 @@ impl<R: Read + Seek> ApeDecoder<R> {
         }
     }
 
-    // -- Internal helpers --
+    /// Access the parsed file info (header, seek table, derived values).
+    pub fn file_info(&self) -> &ApeFileInfo {
+        &self.file_info
+    }
 
-    fn seek_remainder(&self, frame_idx: u32) -> u32 {
+    /// Get the byte alignment remainder for a given frame.
+    /// This value is needed when decoding raw frame bytes externally.
+    pub fn seek_remainder(&self, frame_idx: u32) -> u32 {
         let seek_byte = self.file_info.seek_byte(frame_idx);
         let seek_byte_0 = self.file_info.seek_byte(0);
         ((seek_byte - seek_byte_0) % 4) as u32
     }
 
-    fn read_frame_data(&mut self, frame_idx: u32) -> ApeResult<Vec<u8>> {
+    /// Read the compressed data for a given frame from the source.
+    /// The returned bytes include alignment prefix and padding as needed
+    /// by the APE bitreader. Use `seek_remainder()` to get the bit offset.
+    pub fn read_frame_data(&mut self, frame_idx: u32) -> ApeResult<Vec<u8>> {
         let seek_byte = self.file_info.seek_byte(frame_idx);
         let seek_remainder = self.seek_remainder(frame_idx);
         let frame_bytes = self.file_info.frame_byte_count(frame_idx);
@@ -993,6 +1001,164 @@ fn byte_swap_samples(pcm: &mut [u8], bytes_per_sample: usize) {
             }
         }
         _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FrameDecoder — stateful frame decoder for external demuxer integration
+// ---------------------------------------------------------------------------
+
+/// A stateful APE frame decoder that works on raw compressed frame bytes.
+///
+/// Unlike [`ApeDecoder`] which owns a reader and handles both demuxing and
+/// decoding, `FrameDecoder` only performs decoding. It is designed for
+/// integration with external demuxers (e.g., Symphonia) that manage I/O
+/// separately and supply compressed frame data as byte slices.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// let mut fd = FrameDecoder::new(version, channels, bits_per_sample, compression_level);
+/// let pcm = fd.decode_frame(&frame_bytes, seek_remainder, frame_blocks)?;
+/// ```
+pub struct FrameDecoder {
+    predictors: Predictors,
+    entropy_states: Vec<EntropyState>,
+    range_coder: RangeCoder,
+    version: i32,
+    channels: u16,
+    bits_per_sample: u16,
+    block_align: usize,
+    interim_mode: bool,
+}
+
+impl FrameDecoder {
+    /// Create a new `FrameDecoder` with the given APE stream parameters.
+    ///
+    /// * `version` — APE file version (e.g., 3990). Must be >= 3950.
+    /// * `channels` — Number of audio channels (1–32).
+    /// * `bits_per_sample` — Bits per sample (8, 16, 24, or 32).
+    /// * `compression_level` — Compression level (1000–5000).
+    ///
+    /// Returns an error if the parameters are invalid (unsupported version,
+    /// zero channels, or unsupported bit depth).
+    pub fn new(
+        version: u16,
+        channels: u16,
+        bits_per_sample: u16,
+        compression_level: u16,
+    ) -> ApeResult<Self> {
+        if version < 3950 {
+            return Err(ApeError::UnsupportedVersion(version));
+        }
+        if channels == 0 {
+            return Err(ApeError::InvalidFormat("channel count must be >= 1"));
+        }
+        if !matches!(bits_per_sample, 8 | 16 | 24 | 32) {
+            return Err(ApeError::InvalidFormat(
+                "bits per sample must be 8, 16, 24, or 32",
+            ));
+        }
+
+        let v = version as i32;
+        let comp = compression_level as u32;
+
+        let predictors = if bits_per_sample >= 32 {
+            Predictors::Path32(
+                (0..channels)
+                    .map(|_| Predictor3950_32::new(comp, v))
+                    .collect(),
+            )
+        } else {
+            Predictors::Path16(
+                (0..channels)
+                    .map(|_| Predictor3950::new(comp, v, bits_per_sample))
+                    .collect(),
+            )
+        };
+
+        let entropy_states = (0..channels).map(|_| EntropyState::new()).collect();
+        let bytes_per_sample = (bits_per_sample / 8) as usize;
+        let block_align = bytes_per_sample * channels as usize;
+
+        Ok(FrameDecoder {
+            predictors,
+            entropy_states,
+            range_coder: RangeCoder::new(),
+            version: v,
+            channels,
+            bits_per_sample,
+            block_align,
+            interim_mode: false,
+        })
+    }
+
+    /// Decode a compressed frame to raw PCM bytes.
+    ///
+    /// * `frame_data` — Compressed frame bytes (including alignment prefix),
+    ///   as returned by [`ApeDecoder::read_frame_data`].
+    /// * `seek_remainder` — Byte alignment offset for this frame,
+    ///   as returned by [`ApeDecoder::seek_remainder`].
+    /// * `frame_blocks` — Number of audio blocks (samples per channel) in this frame.
+    pub fn decode_frame(
+        &mut self,
+        frame_data: &[u8],
+        seek_remainder: u32,
+        frame_blocks: usize,
+    ) -> ApeResult<Vec<u8>> {
+        match &mut self.predictors {
+            Predictors::Path16(predictors) => {
+                let result = try_decode_frame_16(
+                    frame_data,
+                    seek_remainder,
+                    frame_blocks,
+                    self.version,
+                    self.channels,
+                    self.bits_per_sample,
+                    self.block_align,
+                    predictors,
+                    &mut self.entropy_states,
+                    &mut self.range_coder,
+                );
+
+                match result {
+                    Ok(pcm) => Ok(pcm),
+                    Err(ApeError::InvalidChecksum)
+                        if self.bits_per_sample == 24 && !self.interim_mode =>
+                    {
+                        self.interim_mode = true;
+                        for p in predictors.iter_mut() {
+                            p.set_interim_mode(true);
+                        }
+                        try_decode_frame_16(
+                            frame_data,
+                            seek_remainder,
+                            frame_blocks,
+                            self.version,
+                            self.channels,
+                            self.bits_per_sample,
+                            self.block_align,
+                            predictors,
+                            &mut self.entropy_states,
+                            &mut self.range_coder,
+                        )
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            Predictors::Path32(predictors) => try_decode_frame_32(
+                frame_data,
+                seek_remainder,
+                frame_blocks,
+                self.version,
+                self.channels,
+                self.bits_per_sample,
+                self.block_align,
+                predictors,
+                &mut self.entropy_states,
+                &mut self.range_coder,
+            ),
+        }
     }
 }
 
