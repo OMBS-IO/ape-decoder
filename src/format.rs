@@ -7,6 +7,7 @@ use crate::error::{ApeError, ApeResult};
 // ---------------------------------------------------------------------------
 
 pub const APE_FORMAT_FLAG_8_BIT: u16 = 1 << 0; // OBSOLETE
+#[allow(dead_code)]
 pub const APE_FORMAT_FLAG_CRC: u16 = 1 << 1; // OBSOLETE
 pub const APE_FORMAT_FLAG_HAS_PEAK_LEVEL: u16 = 1 << 2; // OBSOLETE
 pub const APE_FORMAT_FLAG_24_BIT: u16 = 1 << 3; // OBSOLETE
@@ -47,6 +48,7 @@ const APE_HEADER_OLD_BYTES: u32 = 32;
 
 /// Parsed APE descriptor (52 bytes minimum, all fields little-endian on disk).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ApeDescriptor {
     pub magic: [u8; 4],
     pub version: u16,
@@ -76,6 +78,7 @@ pub struct ApeHeader {
 
 /// All parsed and derived information about an APE file.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ApeFileInfo {
     // Parsed structures
     pub descriptor: ApeDescriptor,

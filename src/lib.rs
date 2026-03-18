@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+#![deny(unsafe_code)]
 // Allow clippy style lints that conflict with the codec's algorithmic patterns
 #![allow(
     clippy::too_many_arguments,     // decode functions mirror C++ parameter lists
@@ -14,19 +16,19 @@
     clippy::type_complexity          // complex closure types in thread spawning
 )]
 
-pub mod bitreader;
-pub mod crc;
+pub(crate) mod bitreader;
+pub(crate) mod crc;
 pub mod decoder;
-pub mod entropy;
+pub(crate) mod entropy;
 pub mod error;
-pub mod format;
+pub(crate) mod format;
 pub mod id3v2;
-pub mod nn_filter;
-pub mod predictor;
-pub mod range_coder;
-pub mod roll_buffer;
+pub(crate) mod nn_filter;
+pub(crate) mod predictor;
+pub(crate) mod range_coder;
+pub(crate) mod roll_buffer;
 pub mod tag;
-pub mod unprepare;
+pub(crate) mod unprepare;
 
 pub use decoder::{decode, ApeDecoder, ApeInfo, FrameIterator, SeekResult, SourceFormat};
 pub use error::{ApeError, ApeResult};

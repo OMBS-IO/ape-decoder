@@ -301,6 +301,7 @@ impl Predictor3950 {
 // ===================================================================
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct Predictor3950_32 {
     // Roll buffers using i64 elements
     rb_prediction_a: RollBuffer<i64>,
@@ -344,6 +345,7 @@ impl Predictor3950_32 {
         p
     }
 
+    #[allow(dead_code)]
     pub fn set_interim_mode(&mut self, mode: bool) {
         self.interim_mode = mode;
         set_interim_mode_32(&mut self.nn_filters, mode);

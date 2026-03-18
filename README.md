@@ -1,5 +1,10 @@
 # ape-decoder
 
+[![CI](https://github.com/OMBS-IO/ape-decoder/actions/workflows/ci.yml/badge.svg)](https://github.com/OMBS-IO/ape-decoder/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/ape-decoder)](https://crates.io/crates/ape-decoder)
+[![docs.rs](https://img.shields.io/docsrs/ape-decoder)](https://docs.rs/ape-decoder)
+[![License](https://img.shields.io/crates/l/ape-decoder)](LICENSE-MIT)
+
 Pure Rust decoder for [Monkey's Audio](https://monkeysaudio.com/) (APE) lossless audio files.
 
 ## Features
@@ -20,7 +25,7 @@ Pure Rust decoder for [Monkey's Audio](https://monkeysaudio.com/) (APE) lossless
 
 ## Quick Start
 
-```rust
+```rust,ignore
 use std::fs::File;
 use std::io::BufReader;
 
@@ -33,7 +38,7 @@ let pcm_data = ape_decoder::decode(&mut reader).unwrap();
 
 ## Streaming Decode
 
-```rust
+```rust,ignore
 use ape_decoder::ApeDecoder;
 use std::fs::File;
 use std::io::BufReader;
@@ -56,7 +61,7 @@ for frame_result in decoder.frames() {
 
 ## Seeking
 
-```rust
+```rust,ignore
 // Seek to a specific sample (returns frame index + skip offset)
 let pos = decoder.seek(44100)?; // seek to 1 second
 println!("Frame {}, skip {} samples", pos.frame_index, pos.skip_samples);
@@ -67,7 +72,7 @@ let pcm_from_1s = decoder.decode_from(44100)?;
 
 ## Reading Tags
 
-```rust
+```rust,ignore
 // APEv2 tags
 if let Some(tag) = decoder.read_tag()? {
     println!("Title: {}", tag.title().unwrap_or("Unknown"));
@@ -87,7 +92,7 @@ if let Some(id3) = decoder.read_id3v2_tag()? {
 
 ## Writing Tags
 
-```rust
+```rust,ignore
 use ape_decoder::{ApeTag, write_tag};
 use std::fs::OpenOptions;
 
@@ -104,21 +109,21 @@ write_tag(&mut file, &tag)?;
 
 ## Parallel Decode
 
-```rust
+```rust,ignore
 // Decode using 4 threads (output is byte-identical to single-threaded)
 let pcm = decoder.decode_all_parallel(4)?;
 ```
 
 ## Range Decode
 
-```rust
+```rust,ignore
 // Decode only samples 44100..88200 (1 second starting at 1s)
 let pcm = decoder.decode_range(44100, 88200)?;
 ```
 
 ## Progress Callback
 
-```rust
+```rust,ignore
 let pcm = decoder.decode_all_with(|progress| {
     println!("{:.0}%", progress * 100.0);
     true // return false to cancel
@@ -127,7 +132,7 @@ let pcm = decoder.decode_all_with(|progress| {
 
 ## APE to WAV Export
 
-```rust
+```rust,ignore
 let header = decoder.wav_header_data()
     .map(|h| h.to_vec())
     .unwrap_or_else(|| decoder.info().generate_wav_header());
@@ -141,7 +146,7 @@ wav.write_all(&pcm)?;
 
 ## MD5 Verification
 
-```rust
+```rust,ignore
 // Quick verify without decompressing (checks stored MD5 hash)
 if decoder.verify_md5()? {
     println!("File integrity OK");

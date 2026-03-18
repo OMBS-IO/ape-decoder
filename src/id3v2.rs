@@ -674,7 +674,7 @@ mod tests {
 
         for entry in entries.unwrap().flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "ape") {
+            if path.extension().is_some_and(|e| e == "ape") {
                 let file = File::open(&path).unwrap();
                 let mut reader = BufReader::new(file);
                 // Should not panic regardless of content.

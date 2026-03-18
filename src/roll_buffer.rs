@@ -105,6 +105,7 @@ impl<T: Copy + Default> RollBuffer<T> {
 
     /// Mutable slice variant.
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn slice_mut(&mut self, offset: isize, count: usize) -> &mut [T] {
         let start = (self.current as isize + offset) as usize;
         &mut self.data[start..start + count]

@@ -263,6 +263,7 @@ impl NNFilter32 {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_interim_mode(&mut self, mode: bool) {
         self.interim_mode = mode;
     }
@@ -432,6 +433,7 @@ pub fn set_interim_mode_16(filters: &mut [NNFilter16], mode: bool) {
     }
 }
 
+#[allow(dead_code)]
 pub fn set_interim_mode_32(filters: &mut [NNFilter32], mode: bool) {
     for f in filters.iter_mut() {
         f.set_interim_mode(mode);

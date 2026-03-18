@@ -84,6 +84,7 @@ impl BitReader {
 
     /// Return the current bit index.
     #[inline]
+    #[allow(dead_code)]
     pub fn bit_index(&self) -> u32 {
         self.bit_index
     }

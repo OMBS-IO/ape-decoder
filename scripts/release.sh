@@ -66,6 +66,21 @@ echo "  Checking format..."
 cargo fmt --check 2>&1
 echo "  Format: PASS"
 
+# Check CHANGELOG has unreleased content
+UNRELEASED_CONTENT=$(sed -n '/^## \[Unreleased\]/,/^## \[/{/^## \[/d;/^$/d;p;}' CHANGELOG.md 2>/dev/null)
+if [ -z "$UNRELEASED_CONTENT" ]; then
+    echo ""
+    echo "WARNING: CHANGELOG.md has no entries under [Unreleased]."
+    echo "  Consider updating CHANGELOG.md before releasing."
+    read -r -p "  Continue anyway? [y/N] " REPLY
+    if [[ ! "$REPLY" =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 1
+    fi
+else
+    echo "  CHANGELOG: has unreleased entries"
+fi
+
 echo ""
 
 # --- Bump version in Cargo.toml ---
@@ -73,10 +88,23 @@ echo "--- Bumping version ---"
 sed -i "s/^version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" Cargo.toml
 echo "  Cargo.toml: $CURRENT -> $NEW_VERSION"
 
+# --- Stamp CHANGELOG.md ---
+echo ""
+echo "--- Updating CHANGELOG ---"
+RELEASE_DATE=$(date +%Y-%m-%d)
+REPO_URL="https://github.com/OMBS-IO/ape-decoder"
+# Stamp the [Unreleased] heading with the new version
+sed -i "s/^## \[Unreleased\]/## [Unreleased]\n\n## [$NEW_VERSION] - $RELEASE_DATE/" CHANGELOG.md
+# Update the [Unreleased] compare link to start from the new tag
+sed -i "s|^\[Unreleased\]: .*/compare/.*$|[Unreleased]: $REPO_URL/compare/v$NEW_VERSION...HEAD|" CHANGELOG.md
+# Insert the new version compare link after the [Unreleased] link
+sed -i "/^\[Unreleased\]:/a [$NEW_VERSION]: $REPO_URL/compare/v$CURRENT...v$NEW_VERSION" CHANGELOG.md
+echo "  CHANGELOG.md: stamped [Unreleased] as [$NEW_VERSION] - $RELEASE_DATE"
+
 # --- Commit, tag, push ---
 echo ""
 echo "--- Git operations ---"
-git add Cargo.toml
+git add Cargo.toml CHANGELOG.md
 git commit -m "release: v$NEW_VERSION"
 echo "  Committed"
 

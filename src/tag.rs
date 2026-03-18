@@ -135,30 +135,37 @@ impl ApeTag {
         self.field(name).and_then(|f| f.value_as_str())
     }
 
+    /// Returns the title field, if present.
     pub fn title(&self) -> Option<&str> {
         self.get(field_names::TITLE)
     }
 
+    /// Returns the artist field, if present.
     pub fn artist(&self) -> Option<&str> {
         self.get(field_names::ARTIST)
     }
 
+    /// Returns the album field, if present.
     pub fn album(&self) -> Option<&str> {
         self.get(field_names::ALBUM)
     }
 
+    /// Returns the year field, if present.
     pub fn year(&self) -> Option<&str> {
         self.get(field_names::YEAR)
     }
 
+    /// Returns the track number field, if present.
     pub fn track(&self) -> Option<&str> {
         self.get(field_names::TRACK)
     }
 
+    /// Returns the genre field, if present.
     pub fn genre(&self) -> Option<&str> {
         self.get(field_names::GENRE)
     }
 
+    /// Returns the comment field, if present.
     pub fn comment(&self) -> Option<&str> {
         self.get(field_names::COMMENT)
     }

@@ -2,6 +2,7 @@ use std::fmt;
 use std::io;
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ApeError {
     Io(io::Error),
     InvalidFormat(&'static str),
