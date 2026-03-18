@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-03-18
+
+### Fixed
+- `cargo fmt` formatting violations that caused CI failure
+
+## [0.3.0] - 2026-03-18
+
+### Added
+- Stress-test integration suite: 6 complex audio signals at all 5 compression levels
+- Per-frame CRC validation tests with corruption detection
+- Fuzz testing setup with 3 targets (full decode, frame decode, parser)
+- Real-world verification script (`scripts/verify_real_world.sh`)
+- APE-to-WAV decode example (`examples/decode_to_file.rs`)
+- Testing & performance section in README
+
+### Fixed
+- NN filter `adapt_16`/`adapt_32` arithmetic overflow on complex audio (use wrapping ops to match C++ semantics)
+- Predictor arithmetic overflow in prediction computation and coefficient adaptation
+- Mid-side decorrelation overflow in `unprepare` module
+- OOM from malformed headers: seek table, WAV header, and frame data allocation caps
+- BitReader out-of-bounds panic on truncated/malformed frame data
+- Metadata computation overflow (`total_blocks * block_align`, etc.) using saturating arithmetic
+- `file_bytes - terminating_data_bytes` underflow on crafted files
+
 ## [0.2.0] - 2026-03-18
 
 ### Added
