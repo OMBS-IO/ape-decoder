@@ -330,9 +330,7 @@ fn read_old_header<R: Read + Seek>(
 
     // Cap at 1M entries (~4MB) to prevent OOM from malformed headers
     if seek_table_elements > 1_000_000 {
-        return Err(ApeError::InvalidFormat(
-            "seek table too large",
-        ));
+        return Err(ApeError::InvalidFormat("seek table too large"));
     }
 
     // Read WAV header data
@@ -497,7 +495,10 @@ pub fn parse<R: Read + Seek>(reader: &mut R) -> ApeResult<ApeFileInfo> {
             0
         };
         let decompressed_bitrate = if header.sample_rate > 0 {
-            (block_align as i64).saturating_mul(header.sample_rate as i64).saturating_mul(8) / 1000
+            (block_align as i64)
+                .saturating_mul(header.sample_rate as i64)
+                .saturating_mul(8)
+                / 1000
         } else {
             0
         };
@@ -645,7 +646,10 @@ pub fn parse<R: Read + Seek>(reader: &mut R) -> ApeResult<ApeFileInfo> {
     };
 
     let decompressed_bitrate = if header.sample_rate > 0 {
-        (block_align as i64).saturating_mul(header.sample_rate as i64).saturating_mul(8) / 1000
+        (block_align as i64)
+            .saturating_mul(header.sample_rate as i64)
+            .saturating_mul(8)
+            / 1000
     } else {
         0
     };
@@ -706,7 +710,9 @@ impl ApeFileInfo {
             // End of compressed data = file_size - terminating_data - tag_bytes
             // For simplicity we exclude terminating data; tag detection would
             // require more work. This matches the SDK pattern.
-            let end = self.file_bytes.saturating_sub(self.descriptor.terminating_data_bytes as u64);
+            let end = self
+                .file_bytes
+                .saturating_sub(self.descriptor.terminating_data_bytes as u64);
             let start = self.seek_byte(frame_idx);
             if end > start {
                 end - start

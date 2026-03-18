@@ -65,8 +65,7 @@ impl BitReader {
         } else {
             // Split across two words
             let right_bits = n - left_bits;
-            let left_value =
-                (w0 & POWERS_OF_TWO_MINUS_ONE[left_bits as usize]) << right_bits;
+            let left_value = (w0 & POWERS_OF_TWO_MINUS_ONE[left_bits as usize]) << right_bits;
             let w1 = self.words.get(word_idx + 1).copied().unwrap_or(0);
             let right_value = w1 >> (32 - right_bits);
             left_value | right_value

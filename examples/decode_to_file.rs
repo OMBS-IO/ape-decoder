@@ -26,7 +26,11 @@ fn main() {
         let info = decoder.info();
         eprintln!(
             "{}Hz, {} ch, {}-bit, {} samples ({} ms)",
-            info.sample_rate, info.channels, info.bits_per_sample, info.total_samples, info.duration_ms,
+            info.sample_rate,
+            info.channels,
+            info.bits_per_sample,
+            info.total_samples,
+            info.duration_ms,
         );
     }
 

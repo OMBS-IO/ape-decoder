@@ -747,7 +747,9 @@ fn try_decode_frame_16(
     range_coder.flush_bit_array(&mut br);
 
     let mut last_x: i32 = 0;
-    let pcm_size = frame_blocks.checked_mul(block_align).ok_or(ApeError::InvalidFormat("frame too large"))?;
+    let pcm_size = frame_blocks
+        .checked_mul(block_align)
+        .ok_or(ApeError::InvalidFormat("frame too large"))?;
     if pcm_size > 64 * 1024 * 1024 {
         return Err(ApeError::InvalidFormat("frame PCM size exceeds 64 MB"));
     }
@@ -858,7 +860,9 @@ fn try_decode_frame_32(
     range_coder.flush_bit_array(&mut br);
 
     let mut last_x: i64 = 0;
-    let pcm_size = frame_blocks.checked_mul(block_align).ok_or(ApeError::InvalidFormat("frame too large"))?;
+    let pcm_size = frame_blocks
+        .checked_mul(block_align)
+        .ok_or(ApeError::InvalidFormat("frame too large"))?;
     if pcm_size > 64 * 1024 * 1024 {
         return Err(ApeError::InvalidFormat("frame PCM size exceeds 64 MB"));
     }

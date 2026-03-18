@@ -93,11 +93,7 @@ fn test_stress_signals_frame_by_frame() {
         for i in 0..decoder.total_frames() {
             all.extend_from_slice(&decoder.decode_frame(i).unwrap());
         }
-        assert_eq!(
-            all, ref_pcm,
-            "{}: frame-by-frame mismatch at c2000",
-            signal
-        );
+        assert_eq!(all, ref_pcm, "{}: frame-by-frame mismatch at c2000", signal);
     }
 }
 
