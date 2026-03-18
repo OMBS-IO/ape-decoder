@@ -525,6 +525,65 @@ impl<R: Read + Seek> ApeDecoder<R> {
         id3v2::read_id3v2(&mut self.reader)
     }
 
+    /// Get the stored MD5 hash from the APE descriptor.
+    pub fn stored_md5(&self) -> &[u8; 16] {
+        &self.file_info.descriptor.md5
+    }
+
+    /// Quick verify: compute MD5 over raw file sections and compare against
+    /// the stored hash in the APE descriptor. Returns `Ok(true)` if the hash
+    /// matches, `Ok(false)` if it doesn't, or `Err` on I/O failure.
+    ///
+    /// This validates file integrity without decompressing the audio.
+    /// Requires version >= 3980.
+    pub fn verify_md5(&mut self) -> ApeResult<bool> {
+        use md5::{Digest, Md5};
+
+        let desc = &self.file_info.descriptor;
+
+        // MD5 only available for version >= 3980 with a descriptor
+        if desc.version < 3980 {
+            return Err(ApeError::UnsupportedVersion(desc.version));
+        }
+
+        // Check if MD5 is all zeros (not set)
+        if desc.md5 == [0u8; 16] {
+            return Ok(true); // No MD5 stored, consider valid
+        }
+
+        let junk = self.file_info.junk_header_bytes as u64;
+        let desc_bytes = desc.descriptor_bytes as u64;
+        let header_bytes = desc.header_bytes as u64;
+        let seek_table_bytes = desc.seek_table_bytes as u64;
+        let header_data_bytes = desc.header_data_bytes as u64;
+        let frame_data_bytes = self.file_info.ape_frame_data_bytes;
+        let term_bytes = desc.terminating_data_bytes as u64;
+
+        let mut hasher = Md5::new();
+
+        // 1. Hash header data (WAV header stored in APE file)
+        let header_data_pos = junk + desc_bytes + header_bytes + seek_table_bytes;
+        self.reader.seek(SeekFrom::Start(header_data_pos))?;
+        copy_to_hasher(&mut self.reader, &mut hasher, header_data_bytes)?;
+
+        // 2. Hash frame data + terminating data (compressed audio + post-audio)
+        // (reader is already positioned at frame data start)
+        copy_to_hasher(&mut self.reader, &mut hasher, frame_data_bytes + term_bytes)?;
+
+        // 3. Hash APE header (out-of-order — header is hashed AFTER audio data)
+        let header_pos = junk + desc_bytes;
+        self.reader.seek(SeekFrom::Start(header_pos))?;
+        copy_to_hasher(&mut self.reader, &mut hasher, header_bytes)?;
+
+        // 4. Hash seek table
+        // (reader is already positioned at seek table start)
+        copy_to_hasher(&mut self.reader, &mut hasher, seek_table_bytes)?;
+
+        // Compare
+        let computed: [u8; 16] = hasher.finalize().into();
+        Ok(computed == desc.md5)
+    }
+
     /// Returns an iterator over decoded frames.
     pub fn frames(&mut self) -> FrameIterator<'_, R> {
         FrameIterator {
@@ -799,6 +858,19 @@ fn try_decode_frame_32(
 
 /// Apply format-flag-dependent transforms to decoded PCM data.
 ///
+/// Copy `n` bytes from a reader into an MD5 hasher in 16KB chunks.
+fn copy_to_hasher<R: Read>(reader: &mut R, hasher: &mut md5::Md5, mut n: u64) -> ApeResult<()> {
+    use md5::Digest;
+    let mut buf = [0u8; 16384];
+    while n > 0 {
+        let to_read = (n as usize).min(buf.len());
+        reader.read_exact(&mut buf[..to_read])?;
+        hasher.update(&buf[..to_read]);
+        n -= to_read as u64;
+    }
+    Ok(())
+}
+
 /// These are applied AFTER CRC verification and match the C++ `GetData()` behavior.
 /// For WAV-sourced files (the common case), all flags are 0 and this is a no-op.
 fn apply_post_processing(pcm: &mut [u8], bits: u16, _channels: u16) {
@@ -1388,5 +1460,48 @@ mod tests {
         let mut data = vec![0x01, 0x02, 0x03, 0x04];
         super::byte_swap_samples(&mut data, 4);
         assert_eq!(data, vec![0x04, 0x03, 0x02, 0x01]);
+    }
+
+    // --- MD5 verification tests ---
+
+    #[test]
+    fn test_verify_md5_all_fixtures() {
+        let fixtures = [
+            "dc_offset_16s_c2000.ape",
+            "identical_16s_c2000.ape",
+            "impulse_16s_c2000.ape",
+            "left_only_16s_c2000.ape",
+            "multiframe_16s_c2000.ape",
+            "noise_16s_c2000.ape",
+            "short_16s_c2000.ape",
+            "silence_16s_c2000.ape",
+            "sine_16m_c2000.ape",
+            "sine_16s_c1000.ape",
+            "sine_16s_c2000.ape",
+            "sine_16s_c3000.ape",
+            "sine_16s_c4000.ape",
+            "sine_16s_c5000.ape",
+            "sine_24s_c2000.ape",
+            "sine_32s_c2000.ape",
+            "sine_8s_c2000.ape",
+        ];
+
+        for fixture in &fixtures {
+            let reader = open_ape(fixture);
+            let mut decoder = ApeDecoder::new(reader).unwrap();
+            let result = decoder
+                .verify_md5()
+                .unwrap_or_else(|e| panic!("MD5 verify failed for {}: {:?}", fixture, e));
+            assert!(result, "MD5 mismatch for {}", fixture);
+        }
+    }
+
+    #[test]
+    fn test_stored_md5_nonzero() {
+        let reader = open_ape("sine_16s_c2000.ape");
+        let decoder = ApeDecoder::new(reader).unwrap();
+        let md5 = decoder.stored_md5();
+        // The mac tool should have stored a valid MD5
+        assert_ne!(md5, &[0u8; 16], "MD5 should not be all zeros");
     }
 }
