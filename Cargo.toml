@@ -10,3 +10,4 @@ categories = ["multimedia::audio", "encoding"]
 
 [dependencies]
 crc32fast = "1"
+md-5 = "0.10"

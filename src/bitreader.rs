@@ -88,3 +88,77 @@ impl BitReader {
         self.bit_index
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_byte_order_within_u32() {
+        // File bytes [0xAB, 0xCD, 0xEF, 0x12] become LE u32 = 0x12EFCDAB
+        // DecodeByte reads MSB first: 0x12, 0xEF, 0xCD, 0xAB
+        let mut br = BitReader::from_frame_bytes(&[0xAB, 0xCD, 0xEF, 0x12], 0);
+        assert_eq!(br.decode_byte(), 0x12); // file byte 3
+        assert_eq!(br.decode_byte(), 0xEF); // file byte 2
+        assert_eq!(br.decode_byte(), 0xCD); // file byte 1
+        assert_eq!(br.decode_byte(), 0xAB); // file byte 0
+    }
+
+    #[test]
+    fn decode_byte_across_words() {
+        let mut br =
+            BitReader::from_frame_bytes(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08], 0);
+        // First word: [01,02,03,04] → LE u32 = 0x04030201 → bytes: 04, 03, 02, 01
+        assert_eq!(br.decode_byte(), 0x04);
+        assert_eq!(br.decode_byte(), 0x03);
+        assert_eq!(br.decode_byte(), 0x02);
+        assert_eq!(br.decode_byte(), 0x01);
+        // Second word: [05,06,07,08] → LE u32 = 0x08070605 → bytes: 08, 07, 06, 05
+        assert_eq!(br.decode_byte(), 0x08);
+        assert_eq!(br.decode_byte(), 0x07);
+    }
+
+    #[test]
+    fn decode_value_x_bits_within_word() {
+        // u32 = 0x04030201, read 32 bits at once
+        let mut br = BitReader::from_frame_bytes(&[0x01, 0x02, 0x03, 0x04], 0);
+        let val = br.decode_value_x_bits(32);
+        assert_eq!(val, 0x04030201);
+    }
+
+    #[test]
+    fn decode_value_x_bits_across_boundary() {
+        // File: [0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44]
+        // Word 0 (LE): 0xDDCCBBAA → MSB-first bytes: DD, CC, BB, AA
+        // Word 1 (LE): 0x44332211 → MSB-first bytes: 44, 33, 22, 11
+        let mut br =
+            BitReader::from_frame_bytes(&[0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44], 0);
+        // Skip 24 bits → past DD, CC, BB → positioned at AA
+        br.advance(24);
+        // Read 16 bits: 8 from word 0 (AA) + 8 from word 1 MSB (44)
+        let val = br.decode_value_x_bits(16);
+        assert_eq!(val, 0xAA44);
+    }
+
+    #[test]
+    fn advance_to_byte_boundary() {
+        let mut br = BitReader::from_frame_bytes(&[0x00; 8], 0);
+        br.advance(3); // bit_index = 3
+        br.advance_to_byte_boundary();
+        assert_eq!(br.bit_index(), 8);
+
+        br.advance_to_byte_boundary(); // already aligned
+        assert_eq!(br.bit_index(), 8);
+
+        br.advance(1); // bit_index = 9
+        br.advance_to_byte_boundary();
+        assert_eq!(br.bit_index(), 16);
+    }
+
+    #[test]
+    fn skip_bits_initial() {
+        let mut br = BitReader::from_frame_bytes(&[0x01, 0x02, 0x03, 0x04], 8);
+        // Skip first byte (bit_index starts at 8), read second byte
+        assert_eq!(br.decode_byte(), 0x03); // second byte of MSB-first order
+    }
+}

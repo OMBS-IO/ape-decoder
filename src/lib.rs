@@ -9,7 +9,9 @@
     clippy::manual_is_multiple_of,  // matches C++ modulo patterns
     clippy::implicit_saturating_sub,// explicit arithmetic matches C++ overflow semantics
     clippy::needless_lifetimes,     // explicit lifetimes clarify borrow relationships
-    clippy::empty_line_after_doc_comments
+    clippy::empty_line_after_doc_comments,
+    clippy::manual_div_ceil,        // explicit div_ceil matches C++ patterns
+    clippy::type_complexity          // complex closure types in thread spawning
 )]
 
 pub mod bitreader;
@@ -18,6 +20,7 @@ pub mod decoder;
 pub mod entropy;
 pub mod error;
 pub mod format;
+pub mod id3v2;
 pub mod nn_filter;
 pub mod predictor;
 pub mod range_coder;
@@ -27,4 +30,5 @@ pub mod unprepare;
 
 pub use decoder::{decode, ApeDecoder, ApeInfo, FrameIterator, SeekResult, SourceFormat};
 pub use error::{ApeError, ApeResult};
+pub use id3v2::{read_id3v2, Id3v2Frame, Id3v2Tag};
 pub use tag::{read_tag, ApeTag, ApeTagField, TagFieldType};
