@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-03-18
+
+### Added
+- Stateful frame decoder (`FrameDecoder`) for use with external demuxers
+
+### Fixed
+- `cargo fmt` formatting of public module imports
+
 ## [0.3.1] - 2026-03-18
 
 ### Fixed
@@ -73,7 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - CI workflow
 - Automated release script
 
-[Unreleased]: https://github.com/OMBS-IO/ape-decoder/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/OMBS-IO/ape-decoder/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/OMBS-IO/ape-decoder/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/OMBS-IO/ape-decoder/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/OMBS-IO/ape-decoder/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/OMBS-IO/ape-decoder/compare/v0.1.1...v0.2.0
